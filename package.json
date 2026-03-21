@@ -1,0 +1,56 @@
+{
+  "name": "migu-music",
+  "version": "2.0.0",
+  "description": "MiGu Music Player - Personal YouTube music streaming app",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "server": "node server.js",
+    "build": "electron-builder --win",
+    "pack": "electron-builder --win --dir"
+  },
+  "build": {
+    "appId": "com.migu.music",
+    "productName": "MiGu Music",
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "public/icon256.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    },
+    "asarUnpack": [
+      "node_modules/youtube-dl-exec/**/*"
+    ],
+    "files": [
+      "main.js",
+      "server.js",
+      "public/**/*",
+      "package.json",
+      "node_modules/youtube-dl-exec/**/*",
+      "node_modules/@aspect/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "node_modules/youtube-dl-exec/bin",
+        "to": "bin"
+      }
+    ]
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.0",
+    "node-fetch": "^2.7.0",
+    "youtube-dl-exec": "^3.0.12"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  }
+}
