@@ -75,6 +75,18 @@
     setGreeting();
     audio.volume = state.volume / 100;
     $('#fav-count').textContent = state.favorites.length;
+
+    if (state.queue && state.queue.length > 0) {
+      renderQueue();
+      if (state.currentIndex >= 0 && state.currentIndex < state.queue.length) {
+        const song = state.queue[state.currentIndex];
+        state.currentSongInfo = song;
+        updateUI(song);
+        audio.src = `/api/stream/${song.videoId}`;
+        audio.load();
+        showBar(true);
+      }
+    }
   }
 
   // ── Persistence ───────────────────────────────────────────────
@@ -308,6 +320,9 @@
   }
 
   function extractId(url) {
+    if (url.includes('soundcloud.com/') || url.includes('spotify.com/') || url.includes('tiktok.com/')) {
+      return encodeURIComponent(url);
+    }
     const patterns = [
       /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/,
       /^([a-zA-Z0-9_-]{11})$/
@@ -319,7 +334,7 @@
   async function handlePaste(url) {
     if (!url) return;
     const videoId = extractId(url);
-    if (!videoId) { toast('Link YouTube không hợp lệ', 'error'); return; }
+    if (!videoId) { toast('Link không hợp lệ', 'error'); return; }
 
     const preview = $('#paste-preview');
     preview.innerHTML = '<div class="loading-spinner"><div class="spinner"></div></div>';
@@ -362,7 +377,7 @@
     switchView('nowplaying');
 
     try {
-      audio.src = `/api/stream/${song.videoId}`;
+      audio.src = `/api/stream/${encodeURIComponent(song.videoId)}`;
       audio.load();
       await audio.play();
       state.isPlaying = true;
