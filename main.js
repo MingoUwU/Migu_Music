@@ -3,7 +3,7 @@ const path = require('path');
 const net = require('net');
 
 const PORT = 3000;
-const ICON_PATH = path.join(__dirname, 'public', 'logo.png');
+const ICON_PATH = path.join(__dirname, 'public', 'icon.png');
 
 let mainWindow;
 let tray;
