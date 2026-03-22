@@ -319,6 +319,51 @@ app.get('/api/info/:id', async (req, res) => {
   }
 });
 
+// ── API: Playlist Info ───────────────────────────────────────────
+app.get('/api/playlist-info/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { v } = req.query; // Optional video ID for context (Mixes)
+
+    let targetUrl = `https://www.youtube.com/playlist?list=${id}`;
+    if (id.startsWith('RD') && v) {
+      targetUrl = `https://www.youtube.com/watch?v=${v}&list=${id}`;
+    }
+
+    // --flat-playlist gives us metadata quickly without analyzing every video's stream
+    // --playlist-items 1-15 limits the results
+    const jsonStr = await runYtDlp([
+      '--flat-playlist',
+      '--dump-json',
+      '--playlist-items', '1-15',
+      '--no-warnings',
+      targetUrl
+    ]);
+
+    // yt-dlp outputs one JSON object per line for a flat playlist
+    const items = jsonStr.split('\n')
+      .filter(line => line.trim())
+      .map(line => {
+        try {
+          const info = JSON.parse(line);
+          return {
+            videoId: info.id || info.url || '',
+            title: info.title || 'Untitled',
+            author: info.uploader || info.channel || '',
+            duration: info.duration || 0,
+            thumbnail: `https://i.ytimg.com/vi/${info.id}/hqdefault.jpg`
+          };
+        } catch (e) { return null; }
+      })
+      .filter(item => item && item.videoId);
+
+    res.json({ playlistId: id, items });
+  } catch (err) {
+    console.error('[MiGu] Playlist info error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch playlist info.' });
+  }
+});
+
 // ── API: Audio Stream Proxy ──────────────────────────────────────
 app.get('/api/stream/:id', async (req, res) => {
   try {

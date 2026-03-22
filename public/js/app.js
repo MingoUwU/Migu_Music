@@ -321,20 +321,37 @@
 
   function extractId(url) {
     if (url.includes('soundcloud.com/') || url.includes('spotify.com/') || url.includes('tiktok.com/')) {
-      return encodeURIComponent(url);
+      return { videoId: encodeURIComponent(url) };
     }
-    const patterns = [
+    
+    // Check for playlist first
+    const listPattern = /[&?]list=([a-zA-Z0-9_-]+)/;
+    const listMatch = url.match(listPattern);
+    const playlistId = listMatch ? listMatch[1] : null;
+
+    const videoPatterns = [
       /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/,
       /^([a-zA-Z0-9_-]{11})$/
     ];
-    for (const p of patterns) { const m = url.match(p); if (m) return m[1]; }
-    return null;
+    let videoId = null;
+    for (const p of videoPatterns) { const m = url.match(p); if (m) { videoId = m[1]; break; } }
+
+    if (!videoId && !playlistId) return null;
+    return { videoId, playlistId };
   }
 
   async function handlePaste(url) {
     if (!url) return;
-    const videoId = extractId(url);
-    if (!videoId) { toast('Link không hợp lệ', 'error'); return; }
+    const ids = extractId(url);
+    if (!ids) { toast('Link không hợp lệ', 'error'); return; }
+
+    const { videoId, playlistId } = ids;
+
+    // If it's a playlist, we prioritize that flow
+    if (playlistId) {
+      handlePlaylistPaste(playlistId, videoId);
+      return;
+    }
 
     const preview = $('#paste-preview');
     preview.innerHTML = '<div class="loading-spinner"><div class="spinner"></div></div>';
@@ -360,6 +377,52 @@
     } catch (err) {
       preview.innerHTML = '<div class="empty-state small"><p>Không thể tải thông tin</p></div>';
       toast('Lỗi tải video', 'error');
+    }
+  }
+
+  async function handlePlaylistPaste(playlistId, startVideoId) {
+    const preview = $('#paste-preview');
+    preview.innerHTML = '<div class="loading-spinner"><div class="spinner"></div><p style="margin-top:10px;font-size:12px;color:var(--text-secondary)">Đang tải playlist...</p></div>';
+
+    try {
+      // 1. Fetch playlist items (first 15)
+      // Pass startVideoId as 'v' param for Mix context
+      const res = await fetch(`/api/playlist-info/${playlistId}${startVideoId ? '?v=' + startVideoId : ''}`);
+      const data = await res.json();
+      if (data.error || !data.items || data.items.length === 0) {
+        throw new Error(data.error || 'Playlist trống hoặc không hợp lệ');
+      }
+
+      // 2. Determine playlist name
+      const count = Object.keys(state.playlists).length + 1;
+      const playlistName = `Playlist ${count}`;
+
+      // 3. Add to state
+      state.playlists[playlistName] = data.items;
+      saveState();
+      renderPlaylists();
+
+      // 4. Play the first song (from the playlist or startVideoId)
+      let firstSong = data.items[0];
+      if (startVideoId) {
+        const found = data.items.find(i => i.videoId === startVideoId);
+        if (found) firstSong = found;
+      }
+
+      preview.innerHTML = `
+        <div class="empty-state small" style="background:var(--accent-soft);border:1px solid var(--accent);border-radius:var(--r-md);padding:14px;text-align:center">
+          <svg style="width:24px;height:24px;color:var(--accent);margin-bottom:8px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+          <div style="font-weight:600;margin-bottom:4px">Đã nhập Playlist!</div>
+          <div style="font-size:12px;opacity:0.8">Tạo thành công "${playlistName}" với ${data.items.length} bài hát.</div>
+        </div>`;
+
+      playSong(firstSong);
+      toast(`Đã tạo ${playlistName} và bắt đầu phát`, 'success');
+
+    } catch (err) {
+      console.error('[MiGu] Playlist error:', err);
+      preview.innerHTML = `<div class="empty-state small"><p>Lỗi: ${err.message}</p></div>`;
+      toast('Lỗi tải playlist', 'error');
     }
   }
 
