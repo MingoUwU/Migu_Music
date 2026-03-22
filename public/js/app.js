@@ -58,7 +58,24 @@
   }
 
   // ── Init ──────────────────────────────────────────────────────
+  async function checkServer() {
+    try {
+      const res = await fetch('/api/health');
+      const data = await res.json();
+      if (data.status === 'ok') {
+        if (!data.ytDlp) {
+          toast('Cảnh báo: Không tìm thấy trình phát nhạc (yt-dlp)', 'error');
+        }
+        console.log('[MiGu] Server connection: OK');
+      }
+    } catch (e) {
+      console.error('[MiGu] Server health check failed');
+      toast('Không thể kết nối đến máy chủ âm nhạc', 'error');
+    }
+  }
+
   function init() {
+    checkServer();
     loadState();
     setupParticles();
     setupNavigation();

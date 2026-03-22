@@ -23,6 +23,8 @@ async function startServer() {
   if (!inUse) {
     require('./server');
     console.log('[MiGu] Started internal server on port', PORT);
+    // Give it a tiny moment to actually bind
+    await new Promise(r => setTimeout(r, 500));
   } else {
     console.log('[MiGu] Port already in use — connecting to existing server');
   }

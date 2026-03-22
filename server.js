@@ -9,12 +9,27 @@ const fs = require('fs');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// ── Logging Setup ─────────────────────────────────────────────
+const logDir = path.join(os.tmpdir(), 'MiGuMusic');
+if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+const logFile = path.join(logDir, 'server.log');
+
+function log(msg, level = 'INFO') {
+  const line = `[${new Date().toISOString()}] [${level}] ${msg}\n`;
+  console.log(`[MiGu] ${msg}`);
+  try { fs.appendFileSync(logFile, line); } catch (e) {}
+}
+
+log(`Server process started. Node: ${process.version}, Arch: ${process.arch}`);
+log(`Log file: ${logFile}`);
+
 // ── Global Error Handlers ─────────────────────────────────────
 process.on('uncaughtException', (err) => {
-  console.error('[MiGu] Uncaught Exception:', err.message);
+  log(`Uncaught Exception: ${err.message}`, 'ERROR');
+  if (err.stack) log(err.stack, 'ERROR');
 });
 process.on('unhandledRejection', (reason) => {
-  console.error('[MiGu] Unhandled Rejection:', reason);
+  log(`Unhandled Rejection: ${reason}`, 'ERROR');
 });
 
 app.use(cors());
@@ -30,31 +45,37 @@ app.get('/Logo.ico', (req, res) => {
 let ytDlpPath = null;
 
 function findYtDlp() {
-  // 1. Check in node_modules (dev)
-  const nmPath = path.join(__dirname, 'node_modules', 'youtube-dl-exec', 'bin', 'yt-dlp.exe');
-  if (fs.existsSync(nmPath)) {
-    console.log('[MiGu] Found yt-dlp in node_modules');
-    return nmPath;
+  // 1. Check in Electron resources (production) - HIGHEST PRIORITY
+  // Check both 'app.asar.unpacked' and 'bin' folder
+  if (process.resourcesPath) {
+    const paths = [
+      path.join(process.resourcesPath, 'bin', 'yt-dlp.exe'),
+      path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'youtube-dl-exec', 'bin', 'yt-dlp.exe'),
+    ];
+    for (const p of paths) {
+      if (fs.existsSync(p)) {
+    log('[MiGu] Found yt-dlp in production resources: ' + p);
+        return p;
+      }
+    }
   }
 
-  // 2. Check in Electron resources (production)
-  if (process.resourcesPath) {
-    const unpackedPath = path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'youtube-dl-exec', 'bin', 'yt-dlp.exe');
-    if (fs.existsSync(unpackedPath)) {
-      console.log('[MiGu] Found yt-dlp in asar.unpacked');
-      return unpackedPath;
-    }
-    const binPath = path.join(process.resourcesPath, 'bin', 'yt-dlp.exe');
-    if (fs.existsSync(binPath)) {
-      console.log('[MiGu] Found yt-dlp in resources/bin');
-      return binPath;
+  // 2. Check in node_modules (dev) - Only if not in app.asar
+  if (!__dirname.includes('app.asar')) {
+    const nmPath = path.join(__dirname, 'node_modules', 'youtube-dl-exec', 'bin', 'yt-dlp.exe');
+    if (fs.existsSync(nmPath)) {
+      log('[MiGu] Found yt-dlp in node_modules (dev)');
+      return nmPath;
     }
   }
 
   // 3. Check system PATH
   try {
     const result = execSync('where yt-dlp', { encoding: 'utf-8' }).trim().split('\n')[0];
-    if (result && fs.existsSync(result.trim())) return result.trim();
+    if (result && fs.existsSync(result.trim())) {
+      log('[MiGu] Found yt-dlp in system PATH');
+      return result.trim();
+    }
   } catch (e) { /* not in PATH */ }
 
   // 4. Check common locations
@@ -67,6 +88,7 @@ function findYtDlp() {
     if (fs.existsSync(p)) return p;
   }
 
+  console.error('[MiGu] CRITICAL: yt-dlp not found!');
   return null;
 }
 
@@ -77,7 +99,7 @@ function runYtDlp(args) {
       reject(new Error('yt-dlp not found'));
       return;
     }
-    console.log('[MiGu] Executing yt-dlp:', args.join(' '));
+    log('[MiGu] Executing yt-dlp: ' + args.join(' '));
     const proc = spawn(ytDlpPath, args, { windowsHide: true });
     let stdout = '';
     let stderr = '';
@@ -86,12 +108,12 @@ function runYtDlp(args) {
     proc.on('close', code => {
       if (code === 0) resolve(stdout.trim());
       else {
-        console.error('[MiGu] yt-dlp Error:', stderr);
+        log('[MiGu] yt-dlp Error: ' + stderr, 'ERROR');
         reject(new Error(stderr || `yt-dlp exited with code ${code}`));
       }
     });
     proc.on('error', err => {
-      console.error('[MiGu] Spawn Error:', err);
+      log('[MiGu] Spawn Error: ' + err, 'ERROR');
       reject(err);
     });
   });
@@ -154,7 +176,7 @@ async function youtubeSearch(query) {
       }
     }
   } catch (e) {
-    console.error('[MiGu] Parse error:', e.message);
+    log('[MiGu] Parse error: ' + e.message, 'ERROR');
   }
 
   return results;
@@ -201,7 +223,7 @@ async function getAudioUrl(videoId) {
     ? 'bestaudio[ext=mp3]/bestaudio[ext=m4a]/bestaudio[protocol^=http][protocol!*=m3u8]/bestaudio' 
     : 'bestaudio[ext=webm][acodec=opus][abr>=160]/bestaudio[ext=webm][acodec=opus]/bestaudio[ext=webm]/bestaudio/best';
 
-  console.log('[MiGu] Extracting for URL:', targetUrl);
+  log('[MiGu] Extracting for URL: ' + targetUrl);
 
   const jsonStr = await runYtDlp([
     '--no-download',
@@ -215,7 +237,7 @@ async function getAudioUrl(videoId) {
   ]);
 
   const info = JSON.parse(jsonStr);
-  console.log('[MiGu] Stream URL obtained:', info.url ? 'YES' : 'NO');
+  log('[MiGu] Stream URL obtained: ' + (info.url ? 'YES' : 'NO'));
   const result = {
     url: info.url,
     title: info.title || '',
@@ -243,7 +265,7 @@ async function getVideoInfo(videoId) {
     ? 'bestaudio[ext=mp3]/bestaudio[ext=m4a]/bestaudio[protocol^=http][protocol!*=m3u8]/bestaudio' 
     : 'bestaudio[ext=webm][acodec=opus][abr>=160]/bestaudio[ext=webm][acodec=opus]/bestaudio[ext=webm]/bestaudio/best';
 
-  console.log('[MiGu] Extracting metadata for:', targetUrl);
+  log('[MiGu] Extracting metadata for: ' + targetUrl);
 
   const jsonStr = await runYtDlp([
     '--no-download',
@@ -291,7 +313,7 @@ app.get('/api/search', async (req, res) => {
     const results = await youtubeSearch(q);
     res.json({ results });
   } catch (err) {
-    console.error('[MiGu] Search error:', err.message);
+    log('[MiGu] Search error: ' + err.message, 'ERROR');
     res.status(500).json({ error: 'Search failed.' });
   }
 });
@@ -314,7 +336,7 @@ app.get('/api/info/:id', async (req, res) => {
       recommendedVideos: recommended
     });
   } catch (err) {
-    console.error('[MiGu] Info error:', err.message);
+    log('[MiGu] Info error: ' + err.message, 'ERROR');
     res.status(500).json({ error: 'Failed to get video info.' });
   }
 });
@@ -359,7 +381,7 @@ app.get('/api/playlist-info/:id', async (req, res) => {
 
     res.json({ playlistId: id, items });
   } catch (err) {
-    console.error('[MiGu] Playlist info error:', err.message);
+    log('[MiGu] Playlist info error: ' + err.message, 'ERROR');
     res.status(500).json({ error: 'Failed to fetch playlist info.' });
   }
 });
@@ -368,15 +390,15 @@ app.get('/api/playlist-info/:id', async (req, res) => {
 app.get('/api/stream/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    console.log('[MiGu] Stream Proxy Request for ID:', id);
+    log('[MiGu] Stream Proxy Request for ID: ' + id);
     const audioInfo = await getAudioUrl(id);
 
     if (!audioInfo.url) {
-      console.error('[MiGu] No stream URL for ID:', id);
+      log('[MiGu] No stream URL for ID: ' + id, 'ERROR');
       return res.status(404).json({ error: 'No audio stream found' });
     }
 
-    console.log('[MiGu] Proxying remote stream:', audioInfo.url.substring(0, 100) + '...');
+    log('[MiGu] Proxying remote stream: ' + audioInfo.url.substring(0, 100) + '...');
 
     // Proxy the audio stream
     const headers = {
@@ -394,17 +416,17 @@ app.get('/api/stream/:id', async (req, res) => {
     const isHLS = contentType.includes('mpegurl') || audioInfo.url.includes('.m3u8');
 
     if (isHLS) {
-      console.log('[MiGu] Detected HLS/M3U8. Re-streaming via yt-dlp for stability...');
+      log('[MiGu] Detected HLS/M3U8. Re-streaming via yt-dlp for stability...');
       if (audioRes.body.destroy) audioRes.body.destroy();
       
       res.setHeader('Content-Type', 'audio/mpeg');
-      const proc = spawn(ytDlpPath, ['-o', '-', '-f', 'bestaudio', '--no-playlist', '--no-warnings', audioInfo.videoId], { windowsHide: true });
+      const proc = spawn(ytDlpPath, ['-o', '-', '-f', 'bestaudio', '--no-playlist', '--no-warnings', id], { windowsHide: true });
       proc.stdout.pipe(res);
-      proc.on('close', (code) => console.log('[MiGu] HLS Stream Process closed with code', code));
+      proc.on('close', (code) => log('[MiGu] HLS Stream Process closed with code ' + code));
       return;
     }
 
-    console.log(`[MiGu] Remote Status: ${audioRes.status} | Content-Type: ${contentType}`);
+    log(`[MiGu] Remote Status: ${audioRes.status} | Content-Type: ${contentType}`);
     res.status(audioRes.status);
     res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Connection', 'keep-alive');
@@ -414,20 +436,20 @@ app.get('/api/stream/:id', async (req, res) => {
     for (const h of fwd) {
       const v = audioRes.headers.get(h);
       if (v) {
-        if (h === 'content-type') console.log(`[MiGu] Mime-Type: ${v}`);
+      if (h === 'content-type') log(`[MiGu] Mime-Type: ${v}`);
         res.set(h, v);
       }
     }
 
     audioRes.body.on('error', (err) => {
-      console.error('[MiGu] Stream Body Error:', err.message);
+      log('[MiGu] Stream Body Error: ' + err.message, 'ERROR');
     });
 
     audioRes.body.pipe(res).on('error', (err) => {
-      console.error('[MiGu] Response Pipe Error:', err.message);
+      log('[MiGu] Response Pipe Error: ' + err.message, 'ERROR');
     });
   } catch (err) {
-    console.error('[MiGu] Stream Proxy Error:', err.message);
+    log('[MiGu] Stream Proxy Error: ' + err.message, 'ERROR');
     if (!res.headersSent) {
       res.status(500).json({ error: 'Failed to proxy stream.' });
     }
@@ -459,9 +481,20 @@ app.get('/api/trending', async (req, res) => {
     const results = await youtubeSearch(query);
     res.json({ results: results.slice(0, 12) });
   } catch (err) {
-    console.error('[MiGu] Trending error:', err.message);
+    log('[MiGu] Trending error: ' + err.message, 'ERROR');
     res.status(500).json({ error: 'Failed to get trending.' });
   }
+});
+
+// ── API: Health Check ───────────────────────────────────────────
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    version: '2.0.0',
+    ytDlp: !!ytDlpPath,
+    ytDlpPath: ytDlpPath ? 'Found' : 'Missing',
+    uptime: process.uptime()
+  });
 });
 
 // ── SPA Fallback ─────────────────────────────────────────────────
@@ -472,13 +505,20 @@ app.get('*', (req, res) => {
 // ── Start Server ─────────────────────────────────────────────────
 ytDlpPath = findYtDlp();
 
+// Verify yt-dlp is actually functional
+if (ytDlpPath) {
+  runYtDlp(['--version'])
+    .then(v => log(`yt-dlp version: ${v}`))
+    .catch(err => log(`yt-dlp verification failed: ${err.message}`, 'ERROR'));
+}
+
 const server = app.listen(PORT, () => {
-  console.log(`
+  log(`
   ╔══════════════════════════════════════╗
   ║     🎵  MiGu Music Server v2.0      ║
   ║     http://localhost:${PORT}            ║
   ╚══════════════════════════════════════╝
-  yt-dlp: ${ytDlpPath || '❌ NOT FOUND - run: npm install youtube-dl-exec'}
+  yt-dlp: ${ytDlpPath || '❌ NOT FOUND'}
   `);
 });
 
