@@ -1,6 +1,46 @@
 const { app, BrowserWindow, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const net = require('net');
+const { ipcMain } = require('electron');
+const DiscordRPC = require('discord-rpc');
+
+// ── Discord RPC ────────────────────────────────────────────────
+const clientId = '1352311651475718214'; // MiGu Music App ID
+const rpc = new DiscordRPC.Client({ transport: 'ipc' });
+
+let rpcConnected = false;
+
+async function setActivity(data) {
+  if (!rpc || !rpcConnected) return;
+
+  const activity = {
+    details: data.title || 'Đang nghe nhạc',
+    state: data.author || 'MiGu Music',
+    largeImageKey: 'logo',
+    largeImageText: 'MiGu Music',
+    instance: false,
+  };
+
+  if (data.isPlaying && data.duration) {
+    const startTimestamp = Date.now();
+    const endTimestamp = startTimestamp + (data.duration - data.currentTime) * 1000;
+    activity.startTimestamp = startTimestamp;
+    activity.endTimestamp = endTimestamp;
+  }
+
+  rpc.setActivity(activity).catch(() => {});
+}
+
+rpc.on('ready', () => {
+  rpcConnected = true;
+  console.log('[Discord] RPC Connected');
+});
+
+rpc.login({ clientId }).catch(console.error);
+
+ipcMain.on('update-rpc', (event, data) => {
+  setActivity(data);
+});
 
 // ── Memory Optimization cho máy 8GB RAM ────────────────────────
 app.commandLine.appendSwitch('renderer-process-limit', '1'); // Giới hạn chỉ mở 1 process cho giao diện
@@ -49,6 +89,7 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js'),
       autoplayPolicy: 'no-user-gesture-required',
       backgroundThrottling: true, // Tối ưu CPU/RAM khi thu nhỏ xuống khay hệ thống
       spellcheck: false // Tắt tính năng kiểm tra chính tả của Chromium (tiết kiệm ~20-30MB RAM)
@@ -57,6 +98,7 @@ function createWindow() {
   });
 
   // Block DevTools shortcuts
+  /*
   mainWindow.webContents.on('before-input-event', (event, input) => {
     if (
       input.key === 'F12' ||
@@ -67,6 +109,7 @@ function createWindow() {
       event.preventDefault();
     }
   });
+  */
 
   mainWindow.setMenuBarVisibility(false);
   mainWindow.loadURL(`http://localhost:${PORT}`);

@@ -40,6 +40,10 @@
 
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
   --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* Dynamic Colors (Updated via JS) */
+  --dynamic-accent: var(--accent);
+  --dynamic-bg: var(--bg-deep);
 }
 
 html, body { height: 100%; overflow: hidden; }
@@ -77,9 +81,10 @@ img    { display: block; max-width: 100%; }
 .bg-gradient {
   position: fixed; inset: 0; z-index: 0; pointer-events: none;
   background:
-    radial-gradient(ellipse 60% 50% at 25% 50%, rgba(100, 80, 255, 0.06), transparent),
-    radial-gradient(ellipse 50% 60% at 75% 30%, rgba(255, 99, 99, 0.05), transparent),
-    radial-gradient(ellipse 70% 50% at 50% 90%, rgba(50, 180, 255, 0.04), transparent);
+    radial-gradient(ellipse 60% 50% at 25% 50%, rgba(100, 80, 255, 0.08), transparent),
+    radial-gradient(ellipse 50% 60% at 75% 30%, var(--dynamic-accent), transparent),
+    radial-gradient(ellipse 70% 50% at 50% 90%, var(--dynamic-bg), transparent);
+  transition: background 1.5s ease;
 }
 
 .bg-particles { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
@@ -606,6 +611,15 @@ img    { display: block; max-width: 100%; }
     0 0 80px rgba(255,99,99,0.06);
   animation: discSpin 25s linear infinite paused;
 }
+
+#np-visualizer {
+  position: absolute;
+  top: 0; left: 0; width: 100%; height: 100%;
+  pointer-events: none;
+  z-index: 2;
+  mix-blend-mode: screen;
+}
+
 .np-disc.spinning { animation-play-state: running; }
 @keyframes discSpin { to { transform: rotate(360deg); } }
 

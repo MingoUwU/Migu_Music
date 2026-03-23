@@ -136,6 +136,7 @@
     setupModals();
     setupMediaSession();
     setupRoom(); // Initialize socket
+    setupVisualizer(); // Initialize Web Audio API
     loadTrending();
     renderPlaylists();
     setGreeting();
@@ -1023,6 +1024,19 @@
     saveState();
     renderQueue();
     renderRoomQueue();
+    updateDiscordRPC();
+  }
+
+  function updateDiscordRPC() {
+    if (window.electronAPI && state.currentSongInfo) {
+      window.electronAPI.updateRPC({
+        title: state.currentSongInfo.title,
+        author: state.currentSongInfo.author,
+        duration: state.currentSongInfo.duration,
+        currentTime: audio.currentTime,
+        isPlaying: state.isPlaying
+      });
+    }
   }
 
   function updateUI(song) {
@@ -1065,6 +1079,40 @@
         artwork: song.thumbnail ? [{ src: song.thumbnail, sizes: '512x512', type: 'image/jpeg' }] : []
       });
     }
+
+    // Update dynamic backdrop
+    if (song.thumbnail) updateDynamicBackdrop(song.thumbnail);
+  }
+
+  function updateDynamicBackdrop(url) {
+    const img = new Image();
+    img.crossOrigin = "Anonymous";
+    img.src = url;
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      canvas.width = 10;
+      canvas.height = 10;
+      ctx.drawImage(img, 0, 0, 10, 10);
+      const data = ctx.getImageData(0, 0, 10, 10).data;
+
+      let r = 0, g = 0, b = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        r += data[i]; g += data[i + 1]; b += data[i + 2];
+      }
+      r = Math.floor(r / (data.length / 4));
+      g = Math.floor(g / (data.length / 4));
+      b = Math.floor(b / (data.length / 4));
+
+      // Increase saturation/brightness for accent
+      const accent = `rgba(${r}, ${g}, ${b}, 0.45)`;
+      const bg = `rgba(${Math.max(0, r - 40)}, ${Math.max(0, g - 40)}, ${Math.max(0, b - 40)}, 0.35)`;
+      
+      console.log('[MiGu] Dynamic colors:', accent, bg);
+      document.documentElement.style.setProperty('--dynamic-accent', accent);
+      document.documentElement.style.setProperty('--dynamic-bg', bg);
+    };
+    img.onerror = (e) => console.error('[MiGu] Color extraction failed (CORS?):', url, e);
   }
 
   function showBar(show) {
@@ -1101,6 +1149,72 @@
     if (pbFav) { pbFav.classList.toggle('is-fav', isFav); if (isFav) pbFav.querySelector('svg')?.setAttribute('fill', 'var(--accent)'); else pbFav.querySelector('svg')?.setAttribute('fill', 'none'); }
   }
 
+  // ── Visualizer ────────────────────────────────────────────────
+  let audioCtx = null;
+  let analyser = null;
+  let source = null;
+
+  function setupVisualizer() {
+    const canvas = $('#np-visualizer');
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    
+    // We initialize AudioContext on first play to comply with browser policies
+    const initCtx = () => {
+      if (audioCtx) return;
+      console.log('[MiGu] Initializing Web Audio Context...');
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      analyser = audioCtx.createAnalyser();
+      source = audioCtx.createMediaElementSource(audio);
+      source.connect(analyser);
+      analyser.connect(audioCtx.destination);
+      analyser.fftSize = 128; // Smaller for cleaner circular bars
+      
+      drawVisualizer();
+      window.removeEventListener('click', initCtx);
+      window.removeEventListener('keydown', initCtx);
+    };
+
+    window.addEventListener('click', initCtx);
+    window.addEventListener('keydown', initCtx);
+
+    function drawVisualizer() {
+      if (!analyser) return;
+      requestAnimationFrame(drawVisualizer);
+
+      const bufferLength = analyser.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
+      analyser.getByteFrequencyData(dataArray);
+
+      const w = canvas.width = 260; // Match np-disc size
+      const h = canvas.height = 260;
+      ctx.clearRect(0, 0, w, h);
+
+      const centerX = w / 2;
+      const centerY = h / 2;
+      const radius = 100; // Base radius for bars
+
+      for (let i = 0; i < bufferLength; i++) {
+        const barHeight = (dataArray[i] / 255) * 40;
+        const angle = (i / bufferLength) * Math.PI * 2;
+        
+        const x1 = centerX + Math.cos(angle) * radius;
+        const y1 = centerY + Math.sin(angle) * radius;
+        const x2 = centerX + Math.cos(angle) * (radius + barHeight);
+        const y2 = centerY + Math.sin(angle) * (radius + barHeight);
+
+        ctx.strokeStyle = `rgba(255, 255, 255, ${0.3 + (dataArray[i] / 255) * 0.7})`;
+        ctx.lineWidth = 3;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+      }
+    }
+  }
+
   // ── Player Controls ───────────────────────────────────────────
   function setupPlayerControls() {
     const toggle = () => {
@@ -1110,12 +1224,14 @@
         state.isPlaying = false;
         updatePlayBtns(false);
         emitRoomState({ isPlaying: false });
+        updateDiscordRPC();
       } else {
         // updatePlayBtns must be called AFTER play() resolves
         audio.play().then(() => {
           state.isPlaying = true;
           updatePlayBtns(true);
           emitRoomState({ isPlaying: true });
+          updateDiscordRPC();
         }).catch((err) => {
           console.warn('Play rejected:', err);
         });
