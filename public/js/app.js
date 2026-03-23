@@ -51,6 +51,35 @@
     pause: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>',
   };
 
+  // ── Permissions ───────────────────────────────────────────────
+  function applyHostPermissions() {
+    const isGuest = roomCode && !isRoomHost;
+    
+    // Disable interactions if guest
+    const targetSelectors = [
+      '#np-btn-play', '#np-btn-prev', '#np-btn-next', '#np-progress-bar',
+      '#np-btn-shuffle', '#np-btn-repeat', '#btn-clear-queue',
+      '#pb-play', '#pb-prev', '#pb-next', '#pb-progress',
+      '#btn-room-go-search', '#btn-room-go-paste',
+      '#room-btn-play', '#room-btn-prev', '#room-btn-next'
+    ];
+    
+    targetSelectors.forEach(sel => {
+      const el = $(sel);
+      if (!el) return;
+      if (isGuest) {
+        el.style.pointerEvents = 'none';
+        el.style.opacity = '0.35';
+      } else {
+        el.style.pointerEvents = 'auto';
+        el.style.opacity = '1';
+      }
+    });
+
+    const rqc = $('#room-queue-container');
+    if (rqc) rqc.style.pointerEvents = isGuest ? 'none' : 'auto';
+  }
+
   // ── Greeting ──────────────────────────────────────────────────
   function setGreeting() {
     const hour = new Date().getHours();
@@ -407,7 +436,10 @@
         
         const wasHost = isRoomHost;
         isRoomHost = (hostId === myUserId);
-        $('#host-controls').style.display = isRoomHost ? 'block' : 'none';
+        const hc = $('#host-controls');
+        if (hc) hc.style.display = isRoomHost ? 'block' : 'none';
+        
+        applyHostPermissions();
         
         if (isRoomHost) {
            if (!wasHost && !isCreating) {
@@ -475,35 +507,8 @@
       const isNewSong = !state.currentSongInfo || state.currentSongInfo.videoId !== update.currentSong.videoId;
       if (isNewSong) {
         
-        if (!isRoomHost && !hasShownSyncPrompt && update.isPlaying) {
-          isProcessingRoomSync = true;
-          $('#sp-song-title').textContent = update.currentSong.title;
-          $('#sync-prompt-modal').classList.add('active');
-          
-          window.resolveSyncPrompt = (choice) => {
-             userSyncChoice = choice;
-             hasShownSyncPrompt = true;
-             $('#sync-prompt-modal').classList.remove('active');
-             
-             state.currentIndex = update.queue ? update.queue.findIndex(q => q.videoId === update.currentSong.videoId) : state.currentIndex;
-             state.currentSongInfo = update.currentSong;
-             updateUI(update.currentSong);
-             showBar(true);
-             try {
-               audio.src = '/api/stream/' + update.currentSong.videoId;
-               audio.load();
-               if (choice === 'sync') {
-                  audio.currentTime = update.currentTime || 0;
-                  if (update.isPlaying) audio.play().catch(()=>{});
-               } else {
-                  audio.currentTime = 0;
-                  audio.play().catch(()=>{});
-               }
-             } catch(e) {}
-             isProcessingRoomSync = false;
-          };
-          return; // Pause UI sync until prompt resolved
-        }
+        // ── Removed Sync Prompt Modal — Always Auto Sync instantly ──
+        hasShownSyncPrompt = true;
         
         hasShownSyncPrompt = true;
 
@@ -966,17 +971,35 @@
   }
 
   function updateUI(song) {
-    $('#np-title').textContent = song.title || '---';
-    $('#np-artist').textContent = song.author || '---';
-    const art = $('#np-artwork');
-    art.src = song.thumbnail || '';
-    art.onerror = () => { art.src = ''; };
+    if (!song) {
+      if ($('#np-title')) $('#np-title').textContent = '---';
+      if ($('#np-artist')) $('#np-artist').textContent = '---';
+      const art = $('#np-artwork'); if (art) art.src = '';
+      if ($('#pb-title')) $('#pb-title').textContent = '---';
+      if ($('#pb-artist')) $('#pb-artist').textContent = '---';
+      const pbT = $('#pb-thumb'); if (pbT) pbT.src = '';
+      if ($('#room-np-title')) $('#room-np-title').textContent = 'Đang không phát';
+      if ($('#room-np-artist')) $('#room-np-artist').textContent = '---';
+      const rnT = $('#room-np-thumb'); if (rnT) rnT.src = '';
+      updateFavBtns(false);
+      if ('mediaSession' in navigator) navigator.mediaSession.metadata = null;
+      return;
+    }
 
-    $('#pb-title').textContent = song.title || '---';
-    $('#pb-artist').textContent = song.author || '---';
+    if ($('#np-title')) $('#np-title').textContent = song.title || '---';
+    if ($('#np-artist')) $('#np-artist').textContent = song.author || '---';
+    const art = $('#np-artwork');
+    if (art) { art.src = song.thumbnail || ''; art.onerror = () => { art.src = ''; }; }
+
+    if ($('#pb-title')) $('#pb-title').textContent = song.title || '---';
+    if ($('#pb-artist')) $('#pb-artist').textContent = song.author || '---';
     const pbT = $('#pb-thumb');
-    pbT.src = song.thumbnail || '';
-    pbT.onerror = () => { pbT.src = ''; };
+    if (pbT) { pbT.src = song.thumbnail || ''; pbT.onerror = () => { pbT.src = ''; }; }
+
+    if ($('#room-np-title')) $('#room-np-title').textContent = song.title || '---';
+    if ($('#room-np-artist')) $('#room-np-artist').textContent = song.author || '---';
+    const rnT = $('#room-np-thumb');
+    if (rnT) { rnT.src = song.thumbnail || ''; rnT.onerror = () => { rnT.src = ''; }; }
 
     const isFav = state.favorites.some(f => f.videoId === song.videoId);
     updateFavBtns(isFav);
@@ -998,11 +1021,22 @@
   function updatePlayBtns(playing) {
     const npBtn = $('#np-btn-play');
     const pbBtn = $('#pb-play');
-    npBtn.innerHTML = playing ? SVG.pause : SVG.play;
-    pbBtn.innerHTML = playing ? SVG.pause : SVG.play;
+    const rmBtn = $('#room-btn-play');
+    
+    if (npBtn) npBtn.innerHTML = playing ? SVG.pause : SVG.play;
+    if (pbBtn) pbBtn.innerHTML = playing ? SVG.pause : SVG.play;
+    if (rmBtn) rmBtn.innerHTML = playing ? SVG.pause : SVG.play;
+    
     const disc = $('#np-disc');
-    if (playing) disc?.classList.add('spinning');
-    else disc?.classList.remove('spinning');
+    const roomDisc = $('#room-np-thumb');
+    
+    if (playing) {
+       disc?.classList.add('spinning');
+       roomDisc?.classList.add('spinning');
+    } else {
+       disc?.classList.remove('spinning');
+       roomDisc?.classList.remove('spinning');
+    }
   }
 
   function updateFavBtns(isFav) {
@@ -1035,11 +1069,14 @@
 
     $('#np-btn-play')?.addEventListener('click', toggle);
     $('#pb-play')?.addEventListener('click', toggle);
+    $('#room-btn-play')?.addEventListener('click', toggle);
 
     $('#np-btn-next')?.addEventListener('click', () => nextTrack());
     $('#np-btn-prev')?.addEventListener('click', () => prevTrack());
     $('#pb-next')?.addEventListener('click', () => nextTrack());
     $('#pb-prev')?.addEventListener('click', () => prevTrack());
+    $('#room-btn-next')?.addEventListener('click', () => nextTrack());
+    $('#room-btn-prev')?.addEventListener('click', () => prevTrack());
 
     // Shuffle
     const shuffleBtn = $('#np-btn-shuffle');
@@ -1106,6 +1143,7 @@
 
     audio.addEventListener('error', (e) => {
       console.error('Audio error:', e);
+      if (!audio.src || audio.src === window.location.href || !state.currentSongInfo) return;
       toast('Lỗi phát nhạc. Đang thử lại...', 'error');
       setTimeout(() => {
         if (state.currentSongInfo) {
