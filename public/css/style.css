@@ -621,6 +621,10 @@ img    { display: block; max-width: 100%; }
   transform: translate(-50%, -50%);
   z-index: 1;
   pointer-events: none;
+  border-radius: var(--r-full);
+  overflow: hidden;
+  mask-image: radial-gradient(circle, rgba(0,0,0,1) 30%, rgba(0,0,0,0) 70%);
+  -webkit-mask-image: radial-gradient(circle, rgba(0,0,0,1) 30%, rgba(0,0,0,0) 70%);
 }
 
 .np-disc {

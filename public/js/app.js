@@ -1279,9 +1279,9 @@
         const spinAngle = radius * armTightness;
         const branchAngle = (i % spiralArms) / spiralArms * Math.PI * 2;
 
-        const randomX = (Math.pow(Math.random(), 3) * (Math.random() < 0.5 ? 1 : -1) * 0.4) * radius;
-        const randomY = (Math.pow(Math.random(), 3) * (Math.random() < 0.5 ? 1 : -1) * 0.4) * radius;
-        const randomZ = (Math.pow(Math.random(), 3) * (Math.random() < 0.5 ? 1 : -1) * 0.4) * radius;
+        const randomX = (Math.pow(Math.random(), 3) * (Math.random() < 0.5 ? 1 : -1) * 0.3) * radius;
+        const randomY = (Math.pow(Math.random(), 3) * (Math.random() < 0.5 ? 1 : -1) * 0.3) * radius;
+        const randomZ = (Math.pow(Math.random(), 3) * (Math.random() < 0.5 ? 1 : -1) * 0.3) * radius;
 
         positions[i3] = Math.cos(branchAngle + spinAngle) * radius + randomX;
         positions[i3 + 1] = randomY * 0.5; // Slightly flatter
