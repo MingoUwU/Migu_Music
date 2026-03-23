@@ -558,10 +558,10 @@
     const update = {
       senderId: myUserId,
       queue: state.queue,
-      currentSong: state.currentSongInfo,
       ...partialState
     };
     if (isRoomHost) {
+      update.currentSong = state.currentSongInfo;
       update.isPlaying = state.isPlaying;
       update.currentTime = audio.currentTime;
       update.syncMode = $('#host-sync-mode')?.checked ? 'sync' : 'start';
@@ -1572,14 +1572,32 @@
   function setupKeyboardShortcuts() {
     document.addEventListener('keydown', (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      const isGuest = roomCode && !isRoomHost;
+
       switch (e.key) {
-        case ' ': e.preventDefault(); $('#np-btn-play')?.click(); break;
-        case 'ArrowRight': if (audio.duration) audio.currentTime = Math.min(audio.duration, audio.currentTime + 10); break;
-        case 'ArrowLeft': if (audio.duration) audio.currentTime = Math.max(0, audio.currentTime - 10); break;
+        case ' ': 
+          if (isGuest) return;
+          e.preventDefault(); 
+          $('#np-btn-play')?.click(); 
+          break;
+        case 'ArrowRight': 
+          if (isGuest) return;
+          if (audio.duration) audio.currentTime = Math.min(audio.duration, audio.currentTime + 10); 
+          break;
+        case 'ArrowLeft': 
+          if (isGuest) return;
+          if (audio.duration) audio.currentTime = Math.max(0, audio.currentTime - 10); 
+          break;
         case 'ArrowUp': e.preventDefault(); setVol(Math.min(100, state.volume + 5)); break;
         case 'ArrowDown': e.preventDefault(); setVol(Math.max(0, state.volume - 5)); break;
-        case 'n': case 'N': nextTrack(); break;
-        case 'p': case 'P': prevTrack(); break;
+        case 'n': case 'N': 
+          if (isGuest) return;
+          nextTrack(); 
+          break;
+        case 'p': case 'P': 
+          if (isGuest) return;
+          prevTrack(); 
+          break;
       }
     });
 
