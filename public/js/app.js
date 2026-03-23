@@ -647,19 +647,19 @@
         e.stopPropagation();
         const idx = parseInt(btn.dataset.index);
         if (idx > 0 && idx !== state.currentIndex) {
-           let target = state.currentIndex >= 0 ? state.currentIndex + 1 : 0;
-           if (target > idx) target--; // Compensate for the element we are about to remove
+          let target = state.currentIndex >= 0 ? state.currentIndex + 1 : 0;
+          if (target > idx) target--; // Compensate for the element we are about to remove
 
-           const song = state.queue.splice(idx, 1)[0];
-           state.queue.splice(target, 0, song);
+          const song = state.queue.splice(idx, 1)[0];
+          state.queue.splice(target, 0, song);
 
-           if (idx < state.currentIndex && target >= state.currentIndex) state.currentIndex--;
-           else if (idx > state.currentIndex && target <= state.currentIndex) state.currentIndex++;
-           
-           renderRoomQueue();
-           renderQueue();
-           saveState();
-           emitRoomState();
+          if (idx < state.currentIndex && target >= state.currentIndex) state.currentIndex--;
+          else if (idx > state.currentIndex && target <= state.currentIndex) state.currentIndex++;
+
+          renderRoomQueue();
+          renderQueue();
+          saveState();
+          emitRoomState();
         }
       });
     });
@@ -1575,28 +1575,28 @@
       const isGuest = roomCode && !isRoomHost;
 
       switch (e.key) {
-        case ' ': 
+        case ' ':
           if (isGuest) return;
-          e.preventDefault(); 
-          $('#np-btn-play')?.click(); 
+          e.preventDefault();
+          $('#np-btn-play')?.click();
           break;
-        case 'ArrowRight': 
+        case 'ArrowRight':
           if (isGuest) return;
-          if (audio.duration) audio.currentTime = Math.min(audio.duration, audio.currentTime + 10); 
+          if (audio.duration) audio.currentTime = Math.min(audio.duration, audio.currentTime + 10);
           break;
-        case 'ArrowLeft': 
+        case 'ArrowLeft':
           if (isGuest) return;
-          if (audio.duration) audio.currentTime = Math.max(0, audio.currentTime - 10); 
+          if (audio.duration) audio.currentTime = Math.max(0, audio.currentTime - 10);
           break;
         case 'ArrowUp': e.preventDefault(); setVol(Math.min(100, state.volume + 5)); break;
         case 'ArrowDown': e.preventDefault(); setVol(Math.max(0, state.volume - 5)); break;
-        case 'n': case 'N': 
+        case 'n': case 'N':
           if (isGuest) return;
-          nextTrack(); 
+          nextTrack();
           break;
-        case 'p': case 'P': 
+        case 'p': case 'P':
           if (isGuest) return;
-          prevTrack(); 
+          prevTrack();
           break;
       }
     });
