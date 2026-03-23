@@ -26,13 +26,13 @@
   let roomCode = null;
   let isRoomHost = false;
   let isProcessingRoomSync = false;
-  
+
   const SUPABASE_URL = 'https://jhuqonoldshtxsquurho.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_ANl0zKdVePo8bAE_B8qKWA_bZOV5BvL';
   let supabase = null;
   let roomChannel = null;
   const myUserId = 'user_' + Math.random().toString(36).substr(2, 9);
-  
+
   // Public Rooms & Sync Prompt State
   let globalLobbyChannel = null;
   let activePublicRooms = [];
@@ -54,16 +54,15 @@
   // ── Permissions ───────────────────────────────────────────────
   function applyHostPermissions() {
     const isGuest = roomCode && !isRoomHost;
-    
-    // Disable interactions if guest
+
+    // Disable interactions if guest (Only disable playback controls)
     const targetSelectors = [
       '#np-btn-play', '#np-btn-prev', '#np-btn-next', '#np-progress-bar',
-      '#np-btn-shuffle', '#np-btn-repeat', '#btn-clear-queue',
+      '#np-btn-shuffle', '#np-btn-repeat',
       '#pb-play', '#pb-prev', '#pb-next', '#pb-progress',
-      '#btn-room-go-search', '#btn-room-go-paste',
       '#room-btn-play', '#room-btn-prev', '#room-btn-next'
     ];
-    
+
     targetSelectors.forEach(sel => {
       const el = $(sel);
       if (!el) return;
@@ -77,7 +76,7 @@
     });
 
     const rqc = $('#room-queue-container');
-    if (rqc) rqc.style.pointerEvents = isGuest ? 'none' : 'auto';
+    // We purposefully DO NOT disable pointer events on rqc so guests can interact with queue items!
   }
 
   // ── Greeting ──────────────────────────────────────────────────
@@ -85,7 +84,7 @@
     const hour = new Date().getHours();
     let text = 'Xin chào';
     let sub = 'Bắt đầu ngày mới với âm nhạc';
-    
+
     if (hour >= 5 && hour < 11) {
       text = 'Chào buổi sáng! ☕️';
       sub = 'Bắt đầu ngày mới tràn đầy năng lượng';
@@ -99,7 +98,7 @@
       text = 'Chào buổi tối! 🌙';
       sub = 'Thả lỏng cơ thể cùng những giai điệu yêu thích';
     }
-    
+
     const h2 = $('#greeting-text');
     const p = $('#greeting-sub');
     if (h2) h2.textContent = text;
@@ -190,13 +189,13 @@
   // ── Room (Supabase Listen Together) ──────────────────────────────────
   function setupRoom() {
     if (typeof window.supabase === 'undefined') {
-       console.warn('[MiGu] Supabase SDK not found. Room feature disabled.');
-       return;
+      console.warn('[MiGu] Supabase SDK not found. Room feature disabled.');
+      return;
     }
-    
+
     supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     console.log('[MiGu] Supabase initialized');
-    
+
     setupGlobalLobby();
     checkUrlForRoom();
 
@@ -205,13 +204,13 @@
       const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
       let code = '';
       for (let i = 0; i < 5; i++) code += chars.charAt(Math.floor(Math.random() * chars.length));
-      
+
       const name = $('#room-create-name')?.value.trim() || 'Phòng ' + code;
       const tags = $('#room-create-tags')?.value.trim() || '';
-      
+
       window.currentRoomMetadata = { name, tags };
       hasShownSyncPrompt = true; // Creator doesn't need prompt
-      
+
       joinRoomByCode(code, true);
     });
 
@@ -232,8 +231,8 @@
       roomCode = null;
       isRoomHost = false;
       hasShownSyncPrompt = false;
-      if (globalLobbyChannel) globalLobbyChannel.untrack().catch(()=>{});
-      
+      if (globalLobbyChannel) globalLobbyChannel.untrack().catch(() => { });
+
       // Restore personal backup
       if (personalBackup) {
         state.queue = personalBackup.queue;
@@ -241,20 +240,21 @@
         state.currentSongInfo = personalBackup.currentSongInfo;
         renderQueue();
         if (state.currentSongInfo) {
-           updateUI(state.currentSongInfo);
-           audio.src = '/api/stream/' + state.currentSongInfo.videoId;
-           audio.load();
-           // we do not resume playback automatically when leaving
+          updateUI(state.currentSongInfo);
+          audio.src = '/api/stream/' + state.currentSongInfo.videoId;
+          audio.load();
+          // we do not resume playback automatically when leaving
         } else {
-           updateUI(null);
-           audio.src = '';
-           showBar(false);
+          updateUI(null);
+          audio.src = '';
+          showBar(false);
         }
         personalBackup = null;
       }
-
       $('#room-setup-panel').style.display = 'block';
       $('#room-active-panel').style.display = 'none';
+      applyHostPermissions();
+      updatePlayBtns(false);
       switchView('home');
       history.pushState({}, '', window.location.pathname);
       toast('Đã rời phòng', 'info');
@@ -295,22 +295,22 @@
     });
 
     $('#btn-sync-yes')?.addEventListener('click', () => {
-       if (window.resolveSyncPrompt) window.resolveSyncPrompt('sync');
+      if (window.resolveSyncPrompt) window.resolveSyncPrompt('sync');
     });
     $('#btn-sync-no')?.addEventListener('click', () => {
-       if (window.resolveSyncPrompt) window.resolveSyncPrompt('start');
+      if (window.resolveSyncPrompt) window.resolveSyncPrompt('start');
     });
 
     $('#btn-room-go-search')?.addEventListener('click', () => {
-       switchView('search');
-       const input = $('#search-input');
-       if (input) input.focus();
+      switchView('search');
+      const input = $('#search-input');
+      if (input) input.focus();
     });
 
     $('#btn-room-go-paste')?.addEventListener('click', () => {
-       switchView('paste');
-       const input = $('#paste-input');
-       if (input) input.focus();
+      switchView('paste');
+      const input = $('#paste-input');
+      if (input) input.focus();
     });
   }
 
@@ -321,40 +321,40 @@
         const state = globalLobbyChannel.presenceState();
         activePublicRooms = [];
         for (const [key, presences] of Object.entries(state)) {
-           if (presences[0] && presences[0].roomId) {
-              activePublicRooms.push(presences[0]);
-           }
+          if (presences[0] && presences[0].roomId) {
+            activePublicRooms.push(presences[0]);
+          }
         }
         renderLobbyRooms();
       })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
-           console.log('[Lobby] Connected to global lobby');
+          console.log('[Lobby] Connected to global lobby');
         }
       });
-      
+
     $('#lobby-search-input')?.addEventListener('input', () => {
-       renderLobbyRooms();
+      renderLobbyRooms();
     });
   }
 
   function renderLobbyRooms() {
     const container = $('#lobby-rooms-list');
     if (!container) return;
-    
+
     const query = ($('#lobby-search-input')?.value || '').toLowerCase();
-    
+
     const filtered = activePublicRooms.filter(r => {
       return (r.name && r.name.toLowerCase().includes(query)) ||
-             (r.tags && r.tags.toLowerCase().includes(query)) ||
-             (r.roomId && r.roomId.toLowerCase().includes(query));
+        (r.tags && r.tags.toLowerCase().includes(query)) ||
+        (r.roomId && r.roomId.toLowerCase().includes(query));
     });
-    
+
     if (filtered.length === 0) {
       container.innerHTML = `<div class="empty-state small" style="opacity: 0.5;">Chưa có phòng nào đang mở. Hãy tạo phòng của bạn nhé!</div>`;
       return;
     }
-    
+
     container.innerHTML = filtered.map(r => `
       <div class="lobby-room-item" style="background: var(--surface); padding: 12px; border-radius: 8px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; border: 1px solid var(--border); transition: all 0.2s;" onclick="joinRoomFromLobby('${r.roomId}')" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
         <div>
@@ -369,7 +369,7 @@
     `).join('');
   }
 
-  window.joinRoomFromLobby = function(code) {
+  window.joinRoomFromLobby = function (code) {
     if (code) joinRoomByCode(code);
   }
 
@@ -388,31 +388,31 @@
     if (roomChannel) {
       await supabase.removeChannel(roomChannel);
     }
-    
+
     // Backup personal queue
     if (!personalBackup) {
       personalBackup = {
-         queue: [...state.queue],
-         currentIndex: state.currentIndex,
-         currentSongInfo: state.currentSongInfo
+        queue: [...state.queue],
+        currentIndex: state.currentIndex,
+        currentSongInfo: state.currentSongInfo
       };
     }
-    
+
     // If creating a room, start fresh
     if (isCreating) {
-       state.queue = [];
-       state.currentIndex = -1;
-       state.currentSongInfo = null;
-       audio.src = '';
-       updateUI(null);
-       showBar(false);
-       renderQueue();
-       renderRoomQueue();
+      state.queue = [];
+      state.currentIndex = -1;
+      state.currentSongInfo = null;
+      audio.src = '';
+      updateUI(null);
+      showBar(false);
+      renderQueue();
+      renderRoomQueue();
     }
-    
+
     roomCode = code.toUpperCase();
     isProcessingRoomSync = true;
-    
+
     roomChannel = supabase.channel(`room:${roomCode}`, {
       config: { presence: { key: myUserId } }
     });
@@ -423,41 +423,41 @@
         const users = Object.keys(state);
         const el = $('#r-users-count');
         if (el) el.textContent = users.length;
-        
+
         // Host Election: earliest joined_at
         let hostId = null;
         let earliest = Infinity;
         for (const [key, presences] of Object.entries(state)) {
-           if (presences[0] && presences[0].joined_at < earliest) {
-             earliest = presences[0].joined_at;
-             hostId = key;
-           }
+          if (presences[0] && presences[0].joined_at < earliest) {
+            earliest = presences[0].joined_at;
+            hostId = key;
+          }
         }
-        
+
         const wasHost = isRoomHost;
         isRoomHost = (hostId === myUserId);
         const hc = $('#host-controls');
         if (hc) hc.style.display = isRoomHost ? 'block' : 'none';
-        
+
         applyHostPermissions();
-        
+
         if (isRoomHost) {
-           if (!wasHost && !isCreating) {
-              toast('Bạn đã trở thành Host', 'info');
-              window.currentRoomMetadata = { name: 'Phòng ' + roomCode, tags: '' };
-           }
-           if (globalLobbyChannel) {
-             globalLobbyChannel.track({
-               roomId: roomCode,
-               name: window.currentRoomMetadata?.name || 'Phòng ' + roomCode,
-               tags: window.currentRoomMetadata?.tags || '',
-               usersCount: users.length
-             }).catch(()=>{});
-           }
+          if (!wasHost && !isCreating) {
+            toast('Bạn đã trở thành Host', 'info');
+            window.currentRoomMetadata = { name: 'Phòng ' + roomCode, tags: '' };
+          }
+          if (globalLobbyChannel) {
+            globalLobbyChannel.track({
+              roomId: roomCode,
+              name: window.currentRoomMetadata?.name || 'Phòng ' + roomCode,
+              tags: window.currentRoomMetadata?.tags || '',
+              usersCount: users.length
+            }).catch(() => { });
+          }
         } else {
-           if (wasHost && globalLobbyChannel) {
-             globalLobbyChannel.untrack().catch(()=>{});
-           }
+          if (wasHost && globalLobbyChannel) {
+            globalLobbyChannel.untrack().catch(() => { });
+          }
         }
       })
       .on('presence', { event: 'join' }, ({ key, newPresences }) => {
@@ -482,7 +482,7 @@
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
           await roomChannel.track({ joined_at: Date.now() });
-          
+
           $('#room-setup-panel').style.display = 'none';
           $('#room-active-panel').style.display = 'flex';
           $('#r-code').textContent = roomCode;
@@ -496,7 +496,7 @@
   function handleStateUpdate(update) {
     if (!roomCode || update.senderId === myUserId) return;
     isProcessingRoomSync = true;
-    
+
     if (update.queue !== undefined) {
       state.queue = update.queue;
       renderQueue();
@@ -506,10 +506,10 @@
     if (update.currentSong !== undefined && update.currentSong !== null) {
       const isNewSong = !state.currentSongInfo || state.currentSongInfo.videoId !== update.currentSong.videoId;
       if (isNewSong) {
-        
+
         // ── Removed Sync Prompt Modal — Always Auto Sync instantly ──
         hasShownSyncPrompt = true;
-        
+
         hasShownSyncPrompt = true;
 
         state.currentIndex = update.queue ? update.queue.findIndex(q => q.videoId === update.currentSong.videoId) : state.currentIndex;
@@ -519,7 +519,7 @@
         try {
           audio.src = '/api/stream/' + update.currentSong.videoId;
           audio.load();
-        } catch(e) {}
+        } catch (e) { }
       }
     }
 
@@ -532,7 +532,7 @@
 
     if (isSync) {
       if (update.isPlaying !== undefined) {
-        if (update.isPlaying && audio.paused) audio.play().catch(()=>{});
+        if (update.isPlaying && audio.paused) audio.play().catch(() => { });
         else if (!update.isPlaying && !audio.paused) audio.pause();
         state.isPlaying = update.isPlaying;
         updatePlayBtns(update.isPlaying);
@@ -543,11 +543,11 @@
         }
       }
     } else {
-       // async mode: if new song, play from 0
-       if (update.currentSong && (!state.currentSongInfo || state.currentSongInfo.videoId !== update.currentSong.videoId)) {
-          audio.currentTime = 0;
-          audio.play().catch(()=>{});
-       }
+      // async mode: if new song, play from 0
+      if (update.currentSong && (!state.currentSongInfo || state.currentSongInfo.videoId !== update.currentSong.videoId)) {
+        audio.currentTime = 0;
+        audio.play().catch(() => { });
+      }
     }
 
     isProcessingRoomSync = false;
@@ -559,11 +559,13 @@
       senderId: myUserId,
       queue: state.queue,
       currentSong: state.currentSongInfo,
-      isPlaying: state.isPlaying,
-      currentTime: audio.currentTime,
-      syncMode: $('#host-sync-mode')?.checked ? 'sync' : 'start',
       ...partialState
     };
+    if (isRoomHost) {
+      update.isPlaying = state.isPlaying;
+      update.currentTime = audio.currentTime;
+      update.syncMode = $('#host-sync-mode')?.checked ? 'sync' : 'start';
+    }
     roomChannel.send({ type: 'broadcast', event: 'room_state', payload: update });
   }
 
@@ -607,7 +609,7 @@
     document.body.appendChild(el);
 
     requestAnimationFrame(() => {
-      el.style.transform = `translateY(-${300 + Math.random()*200}px) scale(1.5) rotate(${Math.random()*40-20}deg)`;
+      el.style.transform = `translateY(-${300 + Math.random() * 200}px) scale(1.5) rotate(${Math.random() * 40 - 20}deg)`;
       el.style.opacity = '0';
     });
 
@@ -622,14 +624,67 @@
       return;
     }
     container.innerHTML = state.queue.map((song, i) => `
-      <div class="queue-item ${state.currentSongInfo && song.videoId === state.currentSongInfo.videoId ? 'active' : ''}" style="margin-bottom:8px;">
-        <img class="queue-item-thumb" src="${song.thumbnail}" alt="" loading="lazy">
+      <div class="queue-item ${state.currentSongInfo && song.videoId === state.currentSongInfo.videoId ? 'active' : ''}" style="margin-bottom:8px;" data-index="${i}">
+        <span class="queue-item-index" style="color:var(--text-secondary);font-size:12px;width:20px;text-align:center;">${i + 1}</span>
+        <img class="queue-item-thumb" src="${song.thumbnail}" alt="" loading="lazy" style="width:40px;height:40px;border-radius:4px;object-fit:cover;">
         <div class="queue-item-info">
           <div class="queue-item-title">${esc(song.title)}</div>
           <div class="queue-item-artist">${esc(song.author)}</div>
         </div>
+        <div class="queue-item-actions" style="margin-left:auto; display:flex; gap:5px;">
+           <button class="btn-icon q-room-up" data-index="${i}" title="Chuyển lên đợi phát">
+             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"/></svg>
+           </button>
+           <button class="btn-icon q-room-remove" data-index="${i}" title="Xóa">
+             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+           </button>
+        </div>
       </div>
     `).join('');
+
+    container.querySelectorAll('.q-room-up').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const idx = parseInt(btn.dataset.index);
+        if (idx > 0 && idx !== state.currentIndex) {
+           let target = state.currentIndex >= 0 ? state.currentIndex + 1 : 0;
+           if (target > idx) target--; // Compensate for the element we are about to remove
+
+           const song = state.queue.splice(idx, 1)[0];
+           state.queue.splice(target, 0, song);
+
+           if (idx < state.currentIndex && target >= state.currentIndex) state.currentIndex--;
+           else if (idx > state.currentIndex && target <= state.currentIndex) state.currentIndex++;
+           
+           renderRoomQueue();
+           renderQueue();
+           saveState();
+           emitRoomState();
+        }
+      });
+    });
+
+    container.querySelectorAll('.q-room-remove').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const idx = parseInt(btn.dataset.index);
+        state.queue.splice(idx, 1);
+        if (idx < state.currentIndex) state.currentIndex--;
+        else if (idx === state.currentIndex) {
+          if (state.queue.length === 0) {
+            state.currentIndex = -1; audio.pause(); audio.src = '';
+            state.isPlaying = false; updatePlayBtns(false); showBar(false);
+          } else {
+            state.currentIndex = Math.min(state.currentIndex, state.queue.length - 1);
+            if (isRoomHost) playSong(state.queue[state.currentIndex], false);
+          }
+        }
+        renderRoomQueue();
+        renderQueue();
+        saveState();
+        emitRoomState();
+      });
+    });
   }
 
   // ── Greeting ──────────────────────────────────────────────────
@@ -637,9 +692,9 @@
     const h = new Date().getHours();
     const el = $('#greeting-text');
     const sub = $('#greeting-sub');
-    if (h < 12)      { el.textContent = 'Chào buổi sáng! 🎵'; sub.textContent = 'Bắt đầu ngày mới với âm nhạc'; }
-    else if (h < 18)  { el.textContent = 'Chào buổi chiều! ☀️'; sub.textContent = 'Thưởng thức âm nhạc thôi nào'; }
-    else              { el.textContent = 'Chào buổi tối! 🌙'; sub.textContent = 'Thư giãn với những giai điệu hay'; }
+    if (h < 12) { el.textContent = 'Chào buổi sáng! '; sub.textContent = 'Bắt đầu ngày mới với âm nhạc'; }
+    else if (h < 18) { el.textContent = 'Chào buổi chiều! '; sub.textContent = 'Thưởng thức âm nhạc thôi nào'; }
+    else { el.textContent = 'Chào buổi tối! '; sub.textContent = 'Thư giãn với những giai điệu hay'; }
   }
 
   // ── Particles ─────────────────────────────────────────────────
@@ -835,7 +890,7 @@
     if (url.includes('soundcloud.com/') || url.includes('spotify.com/') || url.includes('tiktok.com/')) {
       return { videoId: encodeURIComponent(url) };
     }
-    
+
     // Check for playlist first
     const listPattern = /[&?]list=([a-zA-Z0-9_-]+)/;
     const listMatch = url.match(listPattern);
@@ -1022,20 +1077,20 @@
     const npBtn = $('#np-btn-play');
     const pbBtn = $('#pb-play');
     const rmBtn = $('#room-btn-play');
-    
+
     if (npBtn) npBtn.innerHTML = playing ? SVG.pause : SVG.play;
     if (pbBtn) pbBtn.innerHTML = playing ? SVG.pause : SVG.play;
     if (rmBtn) rmBtn.innerHTML = playing ? SVG.pause : SVG.play;
-    
+
     const disc = $('#np-disc');
     const roomDisc = $('#room-np-thumb');
-    
+
     if (playing) {
-       disc?.classList.add('spinning');
-       roomDisc?.classList.add('spinning');
+      disc?.classList.add('spinning');
+      roomDisc?.classList.add('spinning');
     } else {
-       disc?.classList.remove('spinning');
-       roomDisc?.classList.remove('spinning');
+      disc?.classList.remove('spinning');
+      roomDisc?.classList.remove('spinning');
     }
   }
 
@@ -1149,7 +1204,7 @@
         if (state.currentSongInfo) {
           audio.src = `/api/stream/${state.currentSongInfo.videoId}?t=${Date.now()}`;
           audio.load();
-          audio.play().then(() => { state.isPlaying = true; updatePlayBtns(true); }).catch(() => {});
+          audio.play().then(() => { state.isPlaying = true; updatePlayBtns(true); }).catch(() => { });
         }
       }, 2000);
     });
@@ -1520,9 +1575,9 @@
       switch (e.key) {
         case ' ': e.preventDefault(); $('#np-btn-play')?.click(); break;
         case 'ArrowRight': if (audio.duration) audio.currentTime = Math.min(audio.duration, audio.currentTime + 10); break;
-        case 'ArrowLeft':  if (audio.duration) audio.currentTime = Math.max(0, audio.currentTime - 10); break;
-        case 'ArrowUp':    e.preventDefault(); setVol(Math.min(100, state.volume + 5)); break;
-        case 'ArrowDown':  e.preventDefault(); setVol(Math.max(0, state.volume - 5)); break;
+        case 'ArrowLeft': if (audio.duration) audio.currentTime = Math.max(0, audio.currentTime - 10); break;
+        case 'ArrowUp': e.preventDefault(); setVol(Math.min(100, state.volume + 5)); break;
+        case 'ArrowDown': e.preventDefault(); setVol(Math.max(0, state.volume - 5)); break;
         case 'n': case 'N': nextTrack(); break;
         case 'p': case 'P': prevTrack(); break;
       }
