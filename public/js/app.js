@@ -22,6 +22,26 @@
     currentSongInfo: null,
   };
 
+  let socket = null;
+  let roomCode = null;
+  let isRoomHost = false;
+  let isProcessingRoomSync = false;
+
+  const SUPABASE_URL = 'https://jhuqonoldshtxsquurho.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_ANl0zKdVePo8bAE_B8qKWA_bZOV5BvL';
+  let supabase = null;
+  let roomChannel = null;
+  const myUserId = 'user_' + Math.random().toString(36).substr(2, 9);
+
+  // Public Rooms & Sync Prompt State
+  let globalLobbyChannel = null;
+  let activePublicRooms = [];
+  let userSyncChoice = null;
+  let hasShownSyncPrompt = false;
+
+  // Personal state backup when in room
+  let personalBackup = null;
+
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => document.querySelectorAll(sel);
   const audio = $('#audio-player');
@@ -31,12 +51,40 @@
     pause: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>',
   };
 
+  // ── Permissions ───────────────────────────────────────────────
+  function applyHostPermissions() {
+    const isGuest = roomCode && !isRoomHost;
+
+    // Disable interactions if guest (Only disable playback controls)
+    const targetSelectors = [
+      '#np-btn-play', '#np-btn-prev', '#np-btn-next', '#np-progress-bar',
+      '#np-btn-shuffle', '#np-btn-repeat',
+      '#pb-play', '#pb-prev', '#pb-next', '#pb-progress',
+      '#room-btn-play', '#room-btn-prev', '#room-btn-next'
+    ];
+
+    targetSelectors.forEach(sel => {
+      const el = $(sel);
+      if (!el) return;
+      if (isGuest) {
+        el.style.pointerEvents = 'none';
+        el.style.opacity = '0.35';
+      } else {
+        el.style.pointerEvents = 'auto';
+        el.style.opacity = '1';
+      }
+    });
+
+    const rqc = $('#room-queue-container');
+    // We purposefully DO NOT disable pointer events on rqc so guests can interact with queue items!
+  }
+
   // ── Greeting ──────────────────────────────────────────────────
   function setGreeting() {
     const hour = new Date().getHours();
     let text = 'Xin chào';
     let sub = 'Bắt đầu ngày mới với âm nhạc';
-    
+
     if (hour >= 5 && hour < 11) {
       text = 'Chào buổi sáng! ☕️';
       sub = 'Bắt đầu ngày mới tràn đầy năng lượng';
@@ -50,7 +98,7 @@
       text = 'Chào buổi tối! 🌙';
       sub = 'Thả lỏng cơ thể cùng những giai điệu yêu thích';
     }
-    
+
     const h2 = $('#greeting-text');
     const p = $('#greeting-sub');
     if (h2) h2.textContent = text;
@@ -87,6 +135,7 @@
     setupIdleDetection();
     setupModals();
     setupMediaSession();
+    setupRoom(); // Initialize socket
     loadTrending();
     renderPlaylists();
     setGreeting();
@@ -137,14 +186,515 @@
     } catch (e) { /* silent */ }
   }
 
+  // ── Room (Supabase Listen Together) ──────────────────────────────────
+  function setupRoom() {
+    if (typeof window.supabase === 'undefined') {
+      console.warn('[MiGu] Supabase SDK not found. Room feature disabled.');
+      return;
+    }
+
+    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    console.log('[MiGu] Supabase initialized');
+
+    setupGlobalLobby();
+    checkUrlForRoom();
+
+    // Setup UI hooks
+    $('#btn-create-room')?.addEventListener('click', () => {
+      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      let code = '';
+      for (let i = 0; i < 5; i++) code += chars.charAt(Math.floor(Math.random() * chars.length));
+
+      const name = $('#room-create-name')?.value.trim() || 'Phòng ' + code;
+      const tags = $('#room-create-tags')?.value.trim() || '';
+
+      window.currentRoomMetadata = { name, tags };
+      hasShownSyncPrompt = true; // Creator doesn't need prompt
+
+      joinRoomByCode(code, true);
+    });
+
+    $('#btn-join-room-code')?.addEventListener('click', () => {
+      const code = $('#room-join-input').value.trim();
+      if (code) joinRoomByCode(code);
+    });
+
+    $('#room-join-input')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') $('#btn-join-room-code').click();
+    });
+
+    $('#btn-leave-room')?.addEventListener('click', async () => {
+      if (roomChannel) {
+        await supabase.removeChannel(roomChannel);
+        roomChannel = null;
+      }
+      roomCode = null;
+      isRoomHost = false;
+      hasShownSyncPrompt = false;
+      if (globalLobbyChannel) globalLobbyChannel.untrack().catch(() => { });
+
+      // Restore personal backup
+      if (personalBackup) {
+        state.queue = personalBackup.queue;
+        state.currentIndex = personalBackup.currentIndex;
+        state.currentSongInfo = personalBackup.currentSongInfo;
+        renderQueue();
+        if (state.currentSongInfo) {
+          updateUI(state.currentSongInfo);
+          audio.src = '/api/stream/' + state.currentSongInfo.videoId;
+          audio.load();
+          // we do not resume playback automatically when leaving
+        } else {
+          updateUI(null);
+          audio.src = '';
+          showBar(false);
+        }
+        personalBackup = null;
+      }
+      $('#room-setup-panel').style.display = 'block';
+      $('#room-active-panel').style.display = 'none';
+      applyHostPermissions();
+      updatePlayBtns(false);
+      switchView('home');
+      history.pushState({}, '', window.location.pathname);
+      toast('Đã rời phòng', 'info');
+    });
+
+    $('#btn-copy-room-link')?.addEventListener('click', () => {
+      const link = window.location.origin + window.location.pathname + '?room=' + roomCode;
+      navigator.clipboard.writeText(link);
+      toast('Đã copy link phòng', 'success');
+    });
+
+    $('#host-sync-mode')?.addEventListener('change', (e) => {
+      if (isRoomHost) {
+        emitRoomState({ syncMode: e.target.checked ? 'sync' : 'start' });
+        toast(e.target.checked ? 'Đã bật ép đồng bộ' : 'Người nghe tự do', 'info');
+      }
+    });
+
+    $('#room-chat-form')?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const input = $('#room-chat-input');
+      const text = input.value.trim();
+      if (text && roomChannel) {
+        roomChannel.send({ type: 'broadcast', event: 'chat', payload: { text } });
+        addChatMessage(text, true);
+        input.value = '';
+      }
+    });
+
+    $$('.btn-reaction').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (roomChannel) {
+          const emoji = btn.dataset.emoji;
+          roomChannel.send({ type: 'broadcast', event: 'reaction', payload: { emoji } });
+          showReaction(emoji, true);
+        }
+      });
+    });
+
+    $('#btn-sync-yes')?.addEventListener('click', () => {
+      if (window.resolveSyncPrompt) window.resolveSyncPrompt('sync');
+    });
+    $('#btn-sync-no')?.addEventListener('click', () => {
+      if (window.resolveSyncPrompt) window.resolveSyncPrompt('start');
+    });
+
+    $('#btn-room-go-search')?.addEventListener('click', () => {
+      switchView('search');
+      const input = $('#search-input');
+      if (input) input.focus();
+    });
+
+    $('#btn-room-go-paste')?.addEventListener('click', () => {
+      switchView('paste');
+      const input = $('#paste-input');
+      if (input) input.focus();
+    });
+  }
+
+  function setupGlobalLobby() {
+    globalLobbyChannel = supabase.channel('global_lobby');
+    globalLobbyChannel
+      .on('presence', { event: 'sync' }, () => {
+        const state = globalLobbyChannel.presenceState();
+        activePublicRooms = [];
+        for (const [key, presences] of Object.entries(state)) {
+          if (presences[0] && presences[0].roomId) {
+            activePublicRooms.push(presences[0]);
+          }
+        }
+        renderLobbyRooms();
+      })
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('[Lobby] Connected to global lobby');
+        }
+      });
+
+    $('#lobby-search-input')?.addEventListener('input', () => {
+      renderLobbyRooms();
+    });
+  }
+
+  function renderLobbyRooms() {
+    const container = $('#lobby-rooms-list');
+    if (!container) return;
+
+    const query = ($('#lobby-search-input')?.value || '').toLowerCase();
+
+    const filtered = activePublicRooms.filter(r => {
+      return (r.name && r.name.toLowerCase().includes(query)) ||
+        (r.tags && r.tags.toLowerCase().includes(query)) ||
+        (r.roomId && r.roomId.toLowerCase().includes(query));
+    });
+
+    if (filtered.length === 0) {
+      container.innerHTML = `<div class="empty-state small" style="opacity: 0.5;">Chưa có phòng nào đang mở. Hãy tạo phòng của bạn nhé!</div>`;
+      return;
+    }
+
+    container.innerHTML = filtered.map(r => `
+      <div class="lobby-room-item" style="background: var(--surface); padding: 12px; border-radius: 8px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; border: 1px solid var(--border); transition: all 0.2s;" onclick="joinRoomFromLobby('${r.roomId}')" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+        <div>
+          <div style="font-weight: 600; font-size: 15px;">${esc(r.name)}</div>
+          <div style="font-size: 12px; color: var(--accent); margin-top: 6px;"><i class="fas fa-tag"></i> ${esc(r.tags) || 'Không có tag'}</div>
+        </div>
+        <div style="font-size: 13px; opacity: 0.8; text-align: right;">
+          <div style="margin-bottom: 4px;"><i class="fas fa-users"></i> ${r.usersCount || 1}</div>
+          <div style="font-family: monospace; font-size: 12px; background: rgba(0,0,0,0.2); padding: 2px 6px; border-radius: 4px;">Mã: ${r.roomId}</div>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  window.joinRoomFromLobby = function (code) {
+    if (code) joinRoomByCode(code);
+  }
+
+  function checkUrlForRoom() {
+    if (window.location.search.includes('room=')) {
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get('room');
+      if (code) {
+        switchView('room');
+        joinRoomByCode(code);
+      }
+    }
+  }
+
+  async function joinRoomByCode(code, isCreating = false, metadata = null) {
+    if (roomChannel) {
+      await supabase.removeChannel(roomChannel);
+    }
+
+    // Backup personal queue
+    if (!personalBackup) {
+      personalBackup = {
+        queue: [...state.queue],
+        currentIndex: state.currentIndex,
+        currentSongInfo: state.currentSongInfo
+      };
+    }
+
+    // If creating a room, start fresh
+    if (isCreating) {
+      state.queue = [];
+      state.currentIndex = -1;
+      state.currentSongInfo = null;
+      audio.src = '';
+      updateUI(null);
+      showBar(false);
+      renderQueue();
+      renderRoomQueue();
+    }
+
+    roomCode = code.toUpperCase();
+    isProcessingRoomSync = true;
+
+    roomChannel = supabase.channel(`room:${roomCode}`, {
+      config: { presence: { key: myUserId } }
+    });
+
+    roomChannel
+      .on('presence', { event: 'sync' }, () => {
+        const state = roomChannel.presenceState();
+        const users = Object.keys(state);
+        const el = $('#r-users-count');
+        if (el) el.textContent = users.length;
+
+        // Host Election: earliest joined_at
+        let hostId = null;
+        let earliest = Infinity;
+        for (const [key, presences] of Object.entries(state)) {
+          if (presences[0] && presences[0].joined_at < earliest) {
+            earliest = presences[0].joined_at;
+            hostId = key;
+          }
+        }
+
+        const wasHost = isRoomHost;
+        isRoomHost = (hostId === myUserId);
+        const hc = $('#host-controls');
+        if (hc) hc.style.display = isRoomHost ? 'block' : 'none';
+
+        applyHostPermissions();
+
+        if (isRoomHost) {
+          if (!wasHost && !isCreating) {
+            toast('Bạn đã trở thành Host', 'info');
+            window.currentRoomMetadata = { name: 'Phòng ' + roomCode, tags: '' };
+          }
+          if (globalLobbyChannel) {
+            globalLobbyChannel.track({
+              roomId: roomCode,
+              name: window.currentRoomMetadata?.name || 'Phòng ' + roomCode,
+              tags: window.currentRoomMetadata?.tags || '',
+              usersCount: users.length
+            }).catch(() => { });
+          }
+        } else {
+          if (wasHost && globalLobbyChannel) {
+            globalLobbyChannel.untrack().catch(() => { });
+          }
+        }
+      })
+      .on('presence', { event: 'join' }, ({ key, newPresences }) => {
+        if (key !== myUserId) {
+          toast('Một người vừa tham gia', 'info');
+          // If I am host, broadcast the current real-state to the newly joined user
+          if (isRoomHost) emitRoomState({}, true);
+        }
+      })
+      .on('presence', { event: 'leave' }, ({ key, leftPresences }) => {
+        if (key !== myUserId) console.log('[Room] User left');
+      })
+      .on('broadcast', { event: 'room_state' }, ({ payload }) => {
+        handleStateUpdate(payload);
+      })
+      .on('broadcast', { event: 'chat' }, ({ payload }) => {
+        addChatMessage(payload.text, false);
+      })
+      .on('broadcast', { event: 'reaction' }, ({ payload }) => {
+        showReaction(payload.emoji, false);
+      })
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          await roomChannel.track({ joined_at: Date.now() });
+
+          $('#room-setup-panel').style.display = 'none';
+          $('#room-active-panel').style.display = 'flex';
+          $('#r-code').textContent = roomCode;
+          history.pushState({}, '', window.location.pathname + '?room=' + roomCode);
+          toast('Đã tham gia phòng', 'success');
+          isProcessingRoomSync = false;
+        }
+      });
+  }
+
+  function handleStateUpdate(update) {
+    if (!roomCode || update.senderId === myUserId) return;
+    isProcessingRoomSync = true;
+
+    if (update.queue !== undefined) {
+      state.queue = update.queue;
+      renderQueue();
+      renderRoomQueue();
+    }
+
+    if (update.currentSong !== undefined && update.currentSong !== null) {
+      const isNewSong = !state.currentSongInfo || state.currentSongInfo.videoId !== update.currentSong.videoId;
+      if (isNewSong) {
+
+        // ── Removed Sync Prompt Modal — Always Auto Sync instantly ──
+        hasShownSyncPrompt = true;
+
+        hasShownSyncPrompt = true;
+
+        state.currentIndex = update.queue ? update.queue.findIndex(q => q.videoId === update.currentSong.videoId) : state.currentIndex;
+        state.currentSongInfo = update.currentSong;
+        updateUI(update.currentSong);
+        showBar(true);
+        try {
+          audio.src = '/api/stream/' + update.currentSong.videoId;
+          audio.load();
+        } catch (e) { }
+      }
+    }
+
+    if (update.syncMode !== undefined) {
+      const sm = $('#host-sync-mode');
+      if (sm) sm.checked = (update.syncMode === 'sync');
+    }
+
+    const isSync = (update.syncMode || ($('#host-sync-mode')?.checked ? 'sync' : 'start')) === 'sync';
+
+    if (isSync) {
+      if (update.isPlaying !== undefined) {
+        if (update.isPlaying && audio.paused) audio.play().catch(() => { });
+        else if (!update.isPlaying && !audio.paused) audio.pause();
+        state.isPlaying = update.isPlaying;
+        updatePlayBtns(update.isPlaying);
+      }
+      if (update.currentTime !== undefined) {
+        if (Math.abs(audio.currentTime - update.currentTime) > 2) {
+          audio.currentTime = update.currentTime + 0.5; // slight forward sync
+        }
+      }
+    } else {
+      // async mode: if new song, play from 0
+      if (update.currentSong && (!state.currentSongInfo || state.currentSongInfo.videoId !== update.currentSong.videoId)) {
+        audio.currentTime = 0;
+        audio.play().catch(() => { });
+      }
+    }
+
+    isProcessingRoomSync = false;
+  }
+
+  function emitRoomState(partialState = {}, force = false) {
+    if (!roomChannel || !roomCode || (isProcessingRoomSync && !force)) return;
+    const update = {
+      senderId: myUserId,
+      queue: state.queue,
+      ...partialState
+    };
+    if (isRoomHost) {
+      update.currentSong = state.currentSongInfo;
+      update.isPlaying = state.isPlaying;
+      update.currentTime = audio.currentTime;
+      update.syncMode = $('#host-sync-mode')?.checked ? 'sync' : 'start';
+    }
+    roomChannel.send({ type: 'broadcast', event: 'room_state', payload: update });
+  }
+
+  function addChatMessage(text, isSelf) {
+    const box = $('#room-chat-messages');
+    if (!box) return;
+    const el = document.createElement('div');
+    el.style.padding = '8px 12px';
+    el.style.borderRadius = '16px';
+    el.style.maxWidth = '85%';
+    el.style.fontSize = '14px';
+    el.style.lineHeight = '1.4';
+    if (isSelf) {
+      el.style.alignSelf = 'flex-end';
+      el.style.background = 'var(--accent)';
+      el.style.color = 'white';
+      el.style.borderBottomRightRadius = '4px';
+    } else {
+      el.style.alignSelf = 'flex-start';
+      el.style.background = 'rgba(255,255,255,0.1)';
+      el.style.color = 'white';
+      el.style.borderBottomLeftRadius = '4px';
+    }
+    el.textContent = text;
+    box.appendChild(el);
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function showReaction(emoji, isSelf) {
+    const el = document.createElement('div');
+    el.textContent = emoji;
+    el.style.position = 'fixed';
+    el.style.fontSize = '40px';
+    el.style.zIndex = '9999';
+    el.style.pointerEvents = 'none';
+    el.style.transition = 'all 2.5s cubic-bezier(0.2, 0.8, 0.2, 1)';
+    el.style.left = isSelf ? '80%' : (10 + Math.random() * 60) + '%';
+    el.style.bottom = '100px';
+    el.style.opacity = '1';
+    el.style.transform = 'translateY(0) scale(0.5)';
+    document.body.appendChild(el);
+
+    requestAnimationFrame(() => {
+      el.style.transform = `translateY(-${300 + Math.random() * 200}px) scale(1.5) rotate(${Math.random() * 40 - 20}deg)`;
+      el.style.opacity = '0';
+    });
+
+    setTimeout(() => el.remove(), 2500);
+  }
+
+  function renderRoomQueue() {
+    const container = $('#room-queue-container');
+    if (!container) return;
+    if (state.queue.length === 0) {
+      container.innerHTML = '<div class="empty-state small"><p>Hàng chờ phòng trống. Cứ tìm bài và phát nhé!</p></div>';
+      return;
+    }
+    container.innerHTML = state.queue.map((song, i) => `
+      <div class="queue-item ${state.currentSongInfo && song.videoId === state.currentSongInfo.videoId ? 'active' : ''}" style="margin-bottom:8px;" data-index="${i}">
+        <span class="queue-item-index" style="color:var(--text-secondary);font-size:12px;width:20px;text-align:center;">${i + 1}</span>
+        <img class="queue-item-thumb" src="${song.thumbnail}" alt="" loading="lazy" style="width:40px;height:40px;border-radius:4px;object-fit:cover;">
+        <div class="queue-item-info">
+          <div class="queue-item-title">${esc(song.title)}</div>
+          <div class="queue-item-artist">${esc(song.author)}</div>
+        </div>
+        <div class="queue-item-actions" style="margin-left:auto; display:flex; gap:5px;">
+           <button class="btn-icon q-room-up" data-index="${i}" title="Chuyển lên đợi phát">
+             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"/></svg>
+           </button>
+           <button class="btn-icon q-room-remove" data-index="${i}" title="Xóa">
+             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+           </button>
+        </div>
+      </div>
+    `).join('');
+
+    container.querySelectorAll('.q-room-up').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const idx = parseInt(btn.dataset.index);
+        if (idx > 0 && idx !== state.currentIndex) {
+           let target = state.currentIndex >= 0 ? state.currentIndex + 1 : 0;
+           if (target > idx) target--; // Compensate for the element we are about to remove
+
+           const song = state.queue.splice(idx, 1)[0];
+           state.queue.splice(target, 0, song);
+
+           if (idx < state.currentIndex && target >= state.currentIndex) state.currentIndex--;
+           else if (idx > state.currentIndex && target <= state.currentIndex) state.currentIndex++;
+           
+           renderRoomQueue();
+           renderQueue();
+           saveState();
+           emitRoomState();
+        }
+      });
+    });
+
+    container.querySelectorAll('.q-room-remove').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const idx = parseInt(btn.dataset.index);
+        state.queue.splice(idx, 1);
+        if (idx < state.currentIndex) state.currentIndex--;
+        else if (idx === state.currentIndex) {
+          if (state.queue.length === 0) {
+            state.currentIndex = -1; audio.pause(); audio.src = '';
+            state.isPlaying = false; updatePlayBtns(false); showBar(false);
+          } else {
+            state.currentIndex = Math.min(state.currentIndex, state.queue.length - 1);
+            if (isRoomHost) playSong(state.queue[state.currentIndex], false);
+          }
+        }
+        renderRoomQueue();
+        renderQueue();
+        saveState();
+        emitRoomState();
+      });
+    });
+  }
+
   // ── Greeting ──────────────────────────────────────────────────
   function setGreeting() {
     const h = new Date().getHours();
     const el = $('#greeting-text');
     const sub = $('#greeting-sub');
-    if (h < 12)      { el.textContent = 'Chào buổi sáng! 🎵'; sub.textContent = 'Bắt đầu ngày mới với âm nhạc'; }
-    else if (h < 18)  { el.textContent = 'Chào buổi chiều! ☀️'; sub.textContent = 'Thưởng thức âm nhạc thôi nào'; }
-    else              { el.textContent = 'Chào buổi tối! 🌙'; sub.textContent = 'Thư giãn với những giai điệu hay'; }
+    if (h < 12) { el.textContent = 'Chào buổi sáng! '; sub.textContent = 'Bắt đầu ngày mới với âm nhạc'; }
+    else if (h < 18) { el.textContent = 'Chào buổi chiều! '; sub.textContent = 'Thưởng thức âm nhạc thôi nào'; }
+    else { el.textContent = 'Chào buổi tối! '; sub.textContent = 'Thư giãn với những giai điệu hay'; }
   }
 
   // ── Particles ─────────────────────────────────────────────────
@@ -340,7 +890,7 @@
     if (url.includes('soundcloud.com/') || url.includes('spotify.com/') || url.includes('tiktok.com/')) {
       return { videoId: encodeURIComponent(url) };
     }
-    
+
     // Check for playlist first
     const listPattern = /[&?]list=([a-zA-Z0-9_-]+)/;
     const listMatch = url.match(listPattern);
@@ -464,6 +1014,7 @@
       updatePlayBtns(true);
       $('#np-disc')?.classList.add('spinning');
       loadRecommendations(song.videoId);
+      emitRoomState(); // Broadcast new song
     } catch (err) {
       console.error('Play error:', err);
       toast('Không thể phát bài hát này', 'error');
@@ -471,20 +1022,39 @@
 
     saveState();
     renderQueue();
+    renderRoomQueue();
   }
 
   function updateUI(song) {
-    $('#np-title').textContent = song.title || '---';
-    $('#np-artist').textContent = song.author || '---';
-    const art = $('#np-artwork');
-    art.src = song.thumbnail || '';
-    art.onerror = () => { art.src = ''; };
+    if (!song) {
+      if ($('#np-title')) $('#np-title').textContent = '---';
+      if ($('#np-artist')) $('#np-artist').textContent = '---';
+      const art = $('#np-artwork'); if (art) art.src = '';
+      if ($('#pb-title')) $('#pb-title').textContent = '---';
+      if ($('#pb-artist')) $('#pb-artist').textContent = '---';
+      const pbT = $('#pb-thumb'); if (pbT) pbT.src = '';
+      if ($('#room-np-title')) $('#room-np-title').textContent = 'Đang không phát';
+      if ($('#room-np-artist')) $('#room-np-artist').textContent = '---';
+      const rnT = $('#room-np-thumb'); if (rnT) rnT.src = '';
+      updateFavBtns(false);
+      if ('mediaSession' in navigator) navigator.mediaSession.metadata = null;
+      return;
+    }
 
-    $('#pb-title').textContent = song.title || '---';
-    $('#pb-artist').textContent = song.author || '---';
+    if ($('#np-title')) $('#np-title').textContent = song.title || '---';
+    if ($('#np-artist')) $('#np-artist').textContent = song.author || '---';
+    const art = $('#np-artwork');
+    if (art) { art.src = song.thumbnail || ''; art.onerror = () => { art.src = ''; }; }
+
+    if ($('#pb-title')) $('#pb-title').textContent = song.title || '---';
+    if ($('#pb-artist')) $('#pb-artist').textContent = song.author || '---';
     const pbT = $('#pb-thumb');
-    pbT.src = song.thumbnail || '';
-    pbT.onerror = () => { pbT.src = ''; };
+    if (pbT) { pbT.src = song.thumbnail || ''; pbT.onerror = () => { pbT.src = ''; }; }
+
+    if ($('#room-np-title')) $('#room-np-title').textContent = song.title || '---';
+    if ($('#room-np-artist')) $('#room-np-artist').textContent = song.author || '---';
+    const rnT = $('#room-np-thumb');
+    if (rnT) { rnT.src = song.thumbnail || ''; rnT.onerror = () => { rnT.src = ''; }; }
 
     const isFav = state.favorites.some(f => f.videoId === song.videoId);
     updateFavBtns(isFav);
@@ -506,11 +1076,22 @@
   function updatePlayBtns(playing) {
     const npBtn = $('#np-btn-play');
     const pbBtn = $('#pb-play');
-    npBtn.innerHTML = playing ? SVG.pause : SVG.play;
-    pbBtn.innerHTML = playing ? SVG.pause : SVG.play;
+    const rmBtn = $('#room-btn-play');
+
+    if (npBtn) npBtn.innerHTML = playing ? SVG.pause : SVG.play;
+    if (pbBtn) pbBtn.innerHTML = playing ? SVG.pause : SVG.play;
+    if (rmBtn) rmBtn.innerHTML = playing ? SVG.pause : SVG.play;
+
     const disc = $('#np-disc');
-    if (playing) disc?.classList.add('spinning');
-    else disc?.classList.remove('spinning');
+    const roomDisc = $('#room-np-thumb');
+
+    if (playing) {
+      disc?.classList.add('spinning');
+      roomDisc?.classList.add('spinning');
+    } else {
+      disc?.classList.remove('spinning');
+      roomDisc?.classList.remove('spinning');
+    }
   }
 
   function updateFavBtns(isFav) {
@@ -528,11 +1109,13 @@
         audio.pause();
         state.isPlaying = false;
         updatePlayBtns(false);
+        emitRoomState({ isPlaying: false });
       } else {
         // updatePlayBtns must be called AFTER play() resolves
         audio.play().then(() => {
           state.isPlaying = true;
           updatePlayBtns(true);
+          emitRoomState({ isPlaying: true });
         }).catch((err) => {
           console.warn('Play rejected:', err);
         });
@@ -541,11 +1124,14 @@
 
     $('#np-btn-play')?.addEventListener('click', toggle);
     $('#pb-play')?.addEventListener('click', toggle);
+    $('#room-btn-play')?.addEventListener('click', toggle);
 
     $('#np-btn-next')?.addEventListener('click', () => nextTrack());
     $('#np-btn-prev')?.addEventListener('click', () => prevTrack());
     $('#pb-next')?.addEventListener('click', () => nextTrack());
     $('#pb-prev')?.addEventListener('click', () => prevTrack());
+    $('#room-btn-next')?.addEventListener('click', () => nextTrack());
+    $('#room-btn-prev')?.addEventListener('click', () => prevTrack());
 
     // Shuffle
     const shuffleBtn = $('#np-btn-shuffle');
@@ -572,13 +1158,19 @@
     // Progress seeking (NP)
     $('#np-progress-bar')?.addEventListener('click', (e) => {
       const rect = e.currentTarget.getBoundingClientRect();
-      if (audio.duration) audio.currentTime = ((e.clientX - rect.left) / rect.width) * audio.duration;
+      if (audio.duration) {
+        audio.currentTime = ((e.clientX - rect.left) / rect.width) * audio.duration;
+        emitRoomState({ currentTime: audio.currentTime });
+      }
     });
 
     // Progress seeking (PB)
     $('#pb-progress')?.addEventListener('click', (e) => {
       const rect = e.currentTarget.getBoundingClientRect();
-      if (audio.duration) audio.currentTime = ((e.clientX - rect.left) / rect.width) * audio.duration;
+      if (audio.duration) {
+        audio.currentTime = ((e.clientX - rect.left) / rect.width) * audio.duration;
+        emitRoomState({ currentTime: audio.currentTime });
+      }
     });
 
     // Audio events
@@ -597,6 +1189,7 @@
     audio.addEventListener('ended', () => {
       state.isPlaying = false;
       updatePlayBtns(false);
+      emitRoomState({ isPlaying: false });
       if (state.repeat === 'one') {
         audio.currentTime = 0;
         audio.play().then(() => { state.isPlaying = true; updatePlayBtns(true); });
@@ -605,12 +1198,13 @@
 
     audio.addEventListener('error', (e) => {
       console.error('Audio error:', e);
+      if (!audio.src || audio.src === window.location.href || !state.currentSongInfo) return;
       toast('Lỗi phát nhạc. Đang thử lại...', 'error');
       setTimeout(() => {
         if (state.currentSongInfo) {
           audio.src = `/api/stream/${state.currentSongInfo.videoId}?t=${Date.now()}`;
           audio.load();
-          audio.play().then(() => { state.isPlaying = true; updatePlayBtns(true); }).catch(() => {});
+          audio.play().then(() => { state.isPlaying = true; updatePlayBtns(true); }).catch(() => { });
         }
       }, 2000);
     });
@@ -638,8 +1232,10 @@
       state.queue = cur ? [cur] : [];
       state.currentIndex = cur ? 0 : -1;
       renderQueue();
+      if (roomCode) renderRoomQueue();
       saveState();
       toast('Đã xóa hàng chờ', 'info');
+      emitRoomState();
     });
   }
 
@@ -697,7 +1293,9 @@
     if (!state.queue.some(q => q.videoId === song.videoId)) {
       state.queue.push(song);
       renderQueue();
+      if (roomCode) renderRoomQueue();
       saveState();
+      emitRoomState({ queue: state.queue });
     }
   }
 
@@ -748,7 +1346,9 @@
           }
         }
         renderQueue();
+        if (roomCode) renderRoomQueue();
         saveState();
+        emitRoomState();
       });
     });
 
@@ -972,14 +1572,32 @@
   function setupKeyboardShortcuts() {
     document.addEventListener('keydown', (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      const isGuest = roomCode && !isRoomHost;
+
       switch (e.key) {
-        case ' ': e.preventDefault(); $('#np-btn-play')?.click(); break;
-        case 'ArrowRight': if (audio.duration) audio.currentTime = Math.min(audio.duration, audio.currentTime + 10); break;
-        case 'ArrowLeft':  if (audio.duration) audio.currentTime = Math.max(0, audio.currentTime - 10); break;
-        case 'ArrowUp':    e.preventDefault(); setVol(Math.min(100, state.volume + 5)); break;
-        case 'ArrowDown':  e.preventDefault(); setVol(Math.max(0, state.volume - 5)); break;
-        case 'n': case 'N': nextTrack(); break;
-        case 'p': case 'P': prevTrack(); break;
+        case ' ': 
+          if (isGuest) return;
+          e.preventDefault(); 
+          $('#np-btn-play')?.click(); 
+          break;
+        case 'ArrowRight': 
+          if (isGuest) return;
+          if (audio.duration) audio.currentTime = Math.min(audio.duration, audio.currentTime + 10); 
+          break;
+        case 'ArrowLeft': 
+          if (isGuest) return;
+          if (audio.duration) audio.currentTime = Math.max(0, audio.currentTime - 10); 
+          break;
+        case 'ArrowUp': e.preventDefault(); setVol(Math.min(100, state.volume + 5)); break;
+        case 'ArrowDown': e.preventDefault(); setVol(Math.max(0, state.volume - 5)); break;
+        case 'n': case 'N': 
+          if (isGuest) return;
+          nextTrack(); 
+          break;
+        case 'p': case 'P': 
+          if (isGuest) return;
+          prevTrack(); 
+          break;
       }
     });
 
