@@ -1154,13 +1154,16 @@
   let analyser = null;
   let source = null;
 
+  // Three.js Galaxy Variables
+  let gScene, gCamera, gRenderer, gParticles, gGeometry, gMaterial;
+  const starCount = 1500;
+
   function setupVisualizer() {
     const canvas = $('#np-visualizer');
     if (!canvas) return;
 
     const ctx = canvas.getContext('2d');
     
-    // We initialize AudioContext on first play to comply with browser policies
     const initCtx = () => {
       if (audioCtx) return;
       console.log('[MiGu] Initializing Web Audio Context...');
@@ -1169,8 +1172,9 @@
       source = audioCtx.createMediaElementSource(audio);
       source.connect(analyser);
       analyser.connect(audioCtx.destination);
-      analyser.fftSize = 128; // Smaller for cleaner circular bars
+      analyser.fftSize = 128;
       
+      if (state.visualizerMode === '3d') initGalaxy();
       drawVisualizer();
       window.removeEventListener('click', initCtx);
       window.removeEventListener('keydown', initCtx);
@@ -1179,26 +1183,43 @@
     window.addEventListener('click', initCtx);
     window.addEventListener('keydown', initCtx);
 
+    $('#np-btn-menu')?.addEventListener('click', () => toggleVisualizerMode());
+
+    // Initial UI state
+    if (state.visualizerMode === '3d') {
+      const container = $('.np-artwork-container');
+      if (container) {
+        container.style.opacity = '0';
+        container.style.transform = 'scale(0.8)';
+        container.style.pointerEvents = 'none';
+      }
+      $('#galaxy-container').style.display = 'block';
+    }
+
     function drawVisualizer() {
       if (!analyser) return;
       requestAnimationFrame(drawVisualizer);
+
+      if (state.visualizerMode === '3d') {
+        updateGalaxy();
+        return;
+      }
 
       const bufferLength = analyser.frequencyBinCount;
       const dataArray = new Uint8Array(bufferLength);
       analyser.getByteFrequencyData(dataArray);
 
-      const w = canvas.width = 260; // Match np-disc size
+      const w = canvas.width = 260;
       const h = canvas.height = 260;
       ctx.clearRect(0, 0, w, h);
 
       const centerX = w / 2;
       const centerY = h / 2;
-      const radius = 100; // Base radius for bars
+      const radius = 100;
 
       for (let i = 0; i < bufferLength; i++) {
         const barHeight = (dataArray[i] / 255) * 40;
         const angle = (i / bufferLength) * Math.PI * 2;
-        
         const x1 = centerX + Math.cos(angle) * radius;
         const y1 = centerY + Math.sin(angle) * radius;
         const x2 = centerX + Math.cos(angle) * (radius + barHeight);
@@ -1213,6 +1234,157 @@
         ctx.stroke();
       }
     }
+  }
+
+  function initGalaxy() {
+    if (gRenderer) return;
+    const container = $('#galaxy-container');
+    // Ensure we have dimensions even if container is hidden
+    const w = container.offsetWidth || 500;
+    const h = container.offsetHeight || 500;
+
+    gScene = new THREE.Scene();
+    gCamera = new THREE.PerspectiveCamera(60, w / h, 0.1, 1000);
+    gCamera.position.z = 6;
+
+    gRenderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+    gRenderer.setPixelRatio(window.devicePixelRatio);
+    gRenderer.setSize(w, h);
+    container.appendChild(gRenderer.domElement);
+
+    // Create a SHARPER circular glow texture
+    const canvas = document.createElement('canvas');
+    canvas.width = 64; canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+    grad.addColorStop(0.3, 'rgba(255, 255, 255, 0.9)');
+    grad.addColorStop(0.6, 'rgba(255, 255, 255, 0.2)');
+    grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 64, 64);
+    const texture = new THREE.CanvasTexture(canvas);
+
+    gGeometry = new THREE.BufferGeometry();
+    const positions = new Float32Array(starCount * 3);
+    const colors = new Float32Array(starCount * 3);
+    const scales = new Float32Array(starCount);
+
+    const spiralArms = 3;
+    const armTightness = 0.5;
+
+    for (let i = 0; i < starCount; i++) {
+        const i3 = i * 3;
+        const radius = Math.random() * 5;
+        const spinAngle = radius * armTightness;
+        const branchAngle = (i % spiralArms) / spiralArms * Math.PI * 2;
+
+        const randomX = (Math.pow(Math.random(), 3) * (Math.random() < 0.5 ? 1 : -1) * 0.4) * radius;
+        const randomY = (Math.pow(Math.random(), 3) * (Math.random() < 0.5 ? 1 : -1) * 0.4) * radius;
+        const randomZ = (Math.pow(Math.random(), 3) * (Math.random() < 0.5 ? 1 : -1) * 0.4) * radius;
+
+        positions[i3] = Math.cos(branchAngle + spinAngle) * radius + randomX;
+        positions[i3 + 1] = randomY * 0.5; // Slightly flatter
+        positions[i3 + 2] = Math.sin(branchAngle + spinAngle) * radius + randomZ;
+
+        const mixedColor = new THREE.Color();
+        const colorInside = new THREE.Color('#ff0099'); // Brighter Pink
+        const colorOutside = new THREE.Color('#00ccff'); // Solid Cyan
+        mixedColor.lerpColors(colorInside, colorOutside, radius / 5);
+
+        colors[i3] = mixedColor.r;
+        colors[i3 + 1] = mixedColor.g;
+        colors[i3 + 2] = mixedColor.b;
+
+        scales[i] = Math.random();
+    }
+
+    gGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    gGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+    gMaterial = new THREE.PointsMaterial({
+      size: 0.15, // Slightly larger
+      sizeAttenuation: true,
+      vertexColors: true,
+      transparent: true,
+      map: texture,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      opacity: 1 // Max opacity for blending
+    });
+
+    gParticles = new THREE.Points(gGeometry, gMaterial);
+    gScene.add(gParticles);
+
+    // Dynamic resize handler
+    window.addEventListener('resize', () => {
+        const nw = container.offsetWidth;
+        const nh = container.offsetHeight;
+        gCamera.aspect = nw / nh;
+        gCamera.updateProjectionMatrix();
+        gRenderer.setSize(nw, nh);
+    });
+  }
+
+  function updateGalaxy() {
+    if (!analyser || !gParticles) return;
+    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+    analyser.getByteFrequencyData(dataArray);
+
+    let average = 0;
+    for (let i = 0; i < 16; i++) average += dataArray[i]; // Bass
+    average /= 16;
+
+    const lerpPulse = (average / 255);
+    const targetScale = 1 + lerpPulse * 0.8;
+    gParticles.scale.set(
+        THREE.MathUtils.lerp(gParticles.scale.x, targetScale, 0.1),
+        THREE.MathUtils.lerp(gParticles.scale.y, targetScale, 0.1),
+        THREE.MathUtils.lerp(gParticles.scale.z, targetScale, 0.1)
+    );
+
+    gParticles.rotation.y += 0.003 + lerpPulse * 0.02;
+    gParticles.rotation.x = THREE.MathUtils.lerp(gParticles.rotation.x, 0.5 + lerpPulse * 0.3, 0.05);
+
+    gRenderer.render(gScene, gCamera);
+  }
+
+  function toggleVisualizerMode() {
+    state.visualizerMode = state.visualizerMode === '2d' ? '3d' : '2d';
+    localStorage.setItem('migu-vmode', state.visualizerMode);
+
+    const disc = $('#np-disc');
+    const galaxy = $('#galaxy-container');
+    const container = $('.np-artwork-container');
+
+    if (state.visualizerMode === '3d') {
+      if (container) {
+        container.style.opacity = '0';
+        container.style.transform = 'scale(0.8)';
+      }
+      setTimeout(() => { 
+        if (disc) disc.style.display = 'none'; 
+        galaxy.style.display = 'block'; 
+        if (!gRenderer) initGalaxy();
+        else {
+            const w = galaxy.offsetWidth || 500;
+            const h = galaxy.offsetHeight || 500;
+            gRenderer.setSize(w, h);
+            gCamera.aspect = w / h;
+            gCamera.updateProjectionMatrix();
+        }
+      }, 500);
+    } else {
+      galaxy.style.display = 'none';
+      if (disc) disc.style.display = 'flex';
+      setTimeout(() => { 
+        if (container) {
+          container.style.opacity = '1'; 
+          container.style.transform = 'scale(1)'; 
+        }
+      }, 50);
+    }
+    toast(`Chế độ: ${state.visualizerMode === '3d' ? 'Vũ trụ 3D' : 'Đĩa xoay 2D'}`, 'info');
   }
 
   // ── Player Controls ───────────────────────────────────────────

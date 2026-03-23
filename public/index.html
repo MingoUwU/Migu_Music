@@ -300,11 +300,14 @@
     <section class="view" id="view-nowplaying">
       <div class="nowplaying-layout">
         <div class="np-left">
-          <div class="np-artwork-container">
-            <div class="np-disc" id="np-disc">
-              <canvas id="np-visualizer"></canvas>
-              <img class="np-artwork" id="np-artwork" src="" alt="artwork">
-              <div class="np-disc-hole"></div>
+          <div class="visualizer-wrapper">
+            <div id="galaxy-container" style="display:none"></div>
+            <div class="np-artwork-container">
+              <div class="np-disc" id="np-disc">
+                <canvas id="np-visualizer"></canvas>
+                <img class="np-artwork" id="np-artwork" src="" alt="artwork">
+                <div class="np-disc-hole"></div>
+              </div>
             </div>
           </div>
 
@@ -466,6 +469,7 @@
 <!-- Audio Element -->
 <audio id="audio-player" preload="auto"></audio>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="js/app.js"></script>
 </body>
