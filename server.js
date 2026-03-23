@@ -17,7 +17,7 @@ const logFile = path.join(logDir, 'server.log');
 function log(msg, level = 'INFO') {
   const line = `[${new Date().toISOString()}] [${level}] ${msg}\n`;
   console.log(`[MiGu] ${msg}`);
-  try { fs.appendFileSync(logFile, line); } catch (e) {}
+  try { fs.appendFileSync(logFile, line); } catch (e) { }
 }
 
 log(`Server process started. Node: ${process.version}, Arch: ${process.arch}`);
@@ -54,7 +54,7 @@ function findYtDlp() {
     ];
     for (const p of paths) {
       if (fs.existsSync(p)) {
-    log('[MiGu] Found yt-dlp in production resources: ' + p);
+        log('[MiGu] Found yt-dlp in production resources: ' + p);
         return p;
       }
     }
@@ -219,8 +219,8 @@ async function getAudioUrl(videoId) {
 
   const isDirectUrl = videoId.startsWith('http');
   // Avoid m3u8 at all costs, prefer mp3/m4a direct streams
-  const format = isDirectUrl 
-    ? 'bestaudio[ext=mp3]/bestaudio[ext=m4a]/bestaudio[protocol^=http][protocol!*=m3u8]/bestaudio' 
+  const format = isDirectUrl
+    ? 'bestaudio[ext=mp3]/bestaudio[ext=m4a]/bestaudio[protocol^=http][protocol!*=m3u8]/bestaudio'
     : 'bestaudio[ext=webm][acodec=opus][abr>=160]/bestaudio[ext=webm][acodec=opus]/bestaudio[ext=webm]/bestaudio/best';
 
   log('[MiGu] Extracting for URL: ' + targetUrl);
@@ -261,8 +261,8 @@ async function getVideoInfo(videoId) {
 
   const isDirectUrl = videoId.startsWith('http');
   // Avoid m3u8 at all costs, prefer mp3/m4a direct streams
-  const format = isDirectUrl 
-    ? 'bestaudio[ext=mp3]/bestaudio[ext=m4a]/bestaudio[protocol^=http][protocol!*=m3u8]/bestaudio' 
+  const format = isDirectUrl
+    ? 'bestaudio[ext=mp3]/bestaudio[ext=m4a]/bestaudio[protocol^=http][protocol!*=m3u8]/bestaudio'
     : 'bestaudio[ext=webm][acodec=opus][abr>=160]/bestaudio[ext=webm][acodec=opus]/bestaudio[ext=webm]/bestaudio/best';
 
   log('[MiGu] Extracting metadata for: ' + targetUrl);
@@ -418,7 +418,7 @@ app.get('/api/stream/:id', async (req, res) => {
     if (isHLS) {
       log('[MiGu] Detected HLS/M3U8. Re-streaming via yt-dlp for stability...');
       if (audioRes.body.destroy) audioRes.body.destroy();
-      
+
       res.setHeader('Content-Type', 'audio/mpeg');
       const proc = spawn(ytDlpPath, ['-o', '-', '-f', 'bestaudio', '--no-playlist', '--no-warnings', id], { windowsHide: true });
       proc.stdout.pipe(res);
@@ -430,13 +430,13 @@ app.get('/api/stream/:id', async (req, res) => {
     res.status(audioRes.status);
     res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Connection', 'keep-alive');
-    
+
     // Forward all relevant headers
     const fwd = ['content-type', 'content-length', 'content-range', 'cache-control', 'expires'];
     for (const h of fwd) {
       const v = audioRes.headers.get(h);
       if (v) {
-      if (h === 'content-type') log(`[MiGu] Mime-Type: ${v}`);
+        if (h === 'content-type') log(`[MiGu] Mime-Type: ${v}`);
         res.set(h, v);
       }
     }
@@ -473,8 +473,8 @@ app.get('/api/trending', async (req, res) => {
   try {
     // Use search-based approach for reliable trending content
     const queries = [
-      'nhạc trending vietnam 2026',
-      'nhạc hot tiktok mới nhất',
+      'nhạc chill vietnam 2026',
+      'MV mới ra mắt',
       'top hits vietnam'
     ];
     const query = queries[Math.floor(Math.random() * queries.length)];

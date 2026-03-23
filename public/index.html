@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="vi">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,249 +8,350 @@
   <link rel="icon" type="image/png" href="/logo.png">
   <link rel="stylesheet" href="css/style.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Permanent+Marker&display=swap" rel="stylesheet">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Permanent+Marker&display=swap"
+    rel="stylesheet">
 </head>
+
 <body>
 
-<div id="app">
-  <!-- Ambient background -->
-  <div class="bg-gradient"></div>
-  <div class="bg-particles" id="particles"></div>
+  <div id="app">
+    <!-- Ambient background -->
+    <div class="bg-gradient"></div>
+    <div class="bg-particles" id="particles"></div>
 
-  <!-- ─── Sidebar ──────────────────────────────────────── -->
-  <aside class="sidebar">
-    <div class="sidebar-header">
-      <img src="/logo.png" alt="MiGu" class="logo-icon">
-      <span class="logo"><span class="logo-m">M</span><span class="logo-i">i</span><span class="logo-g">G</span><span class="logo-u">u</span></span>
-      <span class="logo-version">v2</span>
-    </div>
-
-    <nav class="sidebar-nav">
-      <button class="nav-btn active" data-view="home">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-        Trang chủ
-      </button>
-      <button class="nav-btn" data-view="search">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        Tìm kiếm
-      </button>
-      <button class="nav-btn" data-view="paste">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
-        Dán Link
-      </button>
-      <button class="nav-btn" data-view="room" id="nav-btn-room" style="color:var(--accent)">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
-        Nghe chung
-      </button>
-    </nav>
-
-    <div class="sidebar-divider"></div>
-
-    <div class="library-section">
-      <div class="library-header">
-        <h3>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
-          Thư viện
-        </h3>
-        <button class="btn-icon" id="btn-create-playlist" title="Tạo playlist mới">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        </button>
-      </div>
-      <div class="playlist-list" id="playlists-container">
-        <button class="playlist-item active" id="btn-favorites">
-          <svg viewBox="0 0 24 24" fill="var(--accent)" stroke="var(--accent)" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>
-          <span>Yêu thích</span>
-          <span class="playlist-count" id="fav-count">0</span>
-        </button>
-      </div>
-    </div>
-
-    <div class="sidebar-footer">Made by Trung Nam</div>
-  </aside>
-
-  <!-- ─── Main ─────────────────────────────────────────── -->
-  <main class="main-content has-player">
-
-    <!-- ─── Home ─────────────────────────────── -->
-    <section class="view active" id="view-home">
-      <div class="view-header">
-        <h2 id="greeting-text">Xin chào! 🎵</h2>
-        <p class="greeting-sub" id="greeting-sub"></p>
+    <!-- ─── Sidebar ──────────────────────────────────────── -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <img src="/logo.png" alt="MiGu" class="logo-icon">
+        <span class="logo"><span class="logo-m">M</span><span class="logo-i">i</span><span class="logo-g">G</span><span
+            class="logo-u">u</span></span>
+        <span class="logo-version">v2</span>
       </div>
 
-      <div class="quick-actions">
-        <button class="quick-action-card" data-view="search">
-          <div class="quick-icon search-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          </div>
-          Tìm Online
+      <nav class="sidebar-nav">
+        <button class="nav-btn active" data-view="home">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+            <polyline points="9 22 9 12 15 12 15 22" />
+          </svg>
+          Trang chủ
         </button>
-        <button class="quick-action-card" data-view="paste">
-          <div class="quick-icon paste-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
-          </div>
+        <button class="nav-btn" data-view="search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+          Tìm kiếm
+        </button>
+        <button class="nav-btn" data-view="paste">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />
+            <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
+          </svg>
           Dán Link
         </button>
-      </div>
+        <button class="nav-btn" data-view="room" id="nav-btn-room" style="color:var(--accent)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+            <circle cx="9" cy="7" r="4" />
+            <path d="M23 21v-2a4 4 0 00-3-3.87" />
+            <path d="M16 3.13a4 4 0 010 7.75" />
+          </svg>
+          Nghe chung
+        </button>
+      </nav>
 
-      <div class="section-header">
-        <h3>🔥 Thịnh hành</h3>
-      </div>
-      <div class="trending-grid" id="trending-container">
-        <div class="loading-spinner" style="grid-column: 1 / -1; padding: 80px 0;"><div class="spinner"></div></div>
-      </div>
-    </section>
+      <div class="sidebar-divider"></div>
 
-    <!-- ─── Search ───────────────────────────── -->
-    <section class="view" id="view-search">
-      <div class="search-container">
-        <div class="search-box">
-          <svg class="search-icon-input" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input type="text" id="search-input" placeholder="Tìm bài hát, nghệ sĩ..." autocomplete="off">
-          <button class="search-clear" id="search-clear" style="display:none">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      <div class="library-section">
+        <div class="library-header">
+          <h3>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
+            </svg>
+            Thư viện
+          </h3>
+          <button class="btn-icon" id="btn-create-playlist" title="Tạo playlist mới">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
           </button>
         </div>
-        <div class="search-suggestions" id="suggestions-container" style="display:none"></div>
-      </div>
-
-      <div class="search-results" id="search-results">
-        <div class="empty-state">
-          <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <p>Nhập tên bài hát để tìm kiếm</p>
-        </div>
-      </div>
-    </section>
-
-    <!-- ─── Paste Link ───────────────────────── -->
-    <section class="view" id="view-paste">
-      <div class="paste-container">
-        <div class="paste-icon-big">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
-        </div>
-        <h2>Dán Link YouTube</h2>
-        <p>Dán link video YouTube để phát nhạc ngay</p>
-        <div class="paste-input-wrap">
-          <input type="text" id="paste-input" placeholder="https://youtube.com/watch?v=..." autocomplete="off">
-          <button class="btn-primary" id="btn-paste-play">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-            Phát
+        <div class="playlist-list" id="playlists-container">
+          <button class="playlist-item active" id="btn-favorites">
+            <svg viewBox="0 0 24 24" fill="var(--accent)" stroke="var(--accent)" stroke-width="2">
+              <path
+                d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" />
+            </svg>
+            <span>Yêu thích</span>
+            <span class="playlist-count" id="fav-count">0</span>
           </button>
         </div>
-        <div class="paste-preview" id="paste-preview"></div>
-      </div>
-    </section>
-
-    <!-- ─── Room ─────────────────────────────── -->
-    <section class="view" id="view-room">
-      <div class="view-header">
-        <h2>🎧 Nghe chung</h2>
-        <p class="greeting-sub" id="room-sub">Mời bạn bè cùng nghe nhạc</p>
       </div>
 
-          <!-- State 1: Setup / Lobby -->
-          <div id="room-setup-panel" class="room-panel" style="display:block;">
-            <div style="display:flex; gap:30px; height:calc(100vh - 200px);">
-              <!-- Cột Trái: Tạo & Tham gia -->
-              <div style="flex:1; background:var(--glass); border-radius:var(--r-md); padding:30px; display:flex; flex-direction:column;">
-                <svg style="width:48px;height:48px;color:var(--accent);margin-bottom:20px;align-self:center;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
-                <h3 style="margin-bottom:10px;text-align:center;">Phòng Nhạc Chung</h3>
-                <p style="color:var(--text-secondary);margin-bottom:20px;text-align:center;font-size:14px;">Tạo phòng để nghe nhạc cùng mọi người trên khắp thế giới.</p>
-                
-                <div style="display:flex; gap:10px; margin-bottom:15px;">
-                  <div class="paste-input-wrap" style="flex:1;"><input type="text" id="room-create-name" placeholder="Tên phòng (tuỳ chọn)" maxlength="30"></div>
-                  <div class="paste-input-wrap" style="flex:1;"><input type="text" id="room-create-tags" placeholder="Tags: chill, lofi..." maxlength="50"></div>
+      <div class="sidebar-footer">Made by Trung Nam</div>
+    </aside>
+
+    <!-- ─── Main ─────────────────────────────────────────── -->
+    <main class="main-content has-player">
+
+      <!-- ─── Home ─────────────────────────────── -->
+      <section class="view active" id="view-home">
+        <div class="view-header">
+          <h2 id="greeting-text">Xin chào! 🎵</h2>
+          <p class="greeting-sub" id="greeting-sub"></p>
+        </div>
+
+        <div class="quick-actions">
+          <button class="quick-action-card" data-view="search">
+            <div class="quick-icon search-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+            </div>
+            Tìm Online
+          </button>
+          <button class="quick-action-card" data-view="paste">
+            <div class="quick-icon paste-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />
+                <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
+              </svg>
+            </div>
+            Dán Link
+          </button>
+        </div>
+
+        <div class="section-header">
+          <h3>🔥 Thịnh hành</h3>
+        </div>
+        <div class="trending-grid" id="trending-container">
+          <div class="loading-spinner" style="grid-column: 1 / -1; padding: 80px 0;">
+            <div class="spinner"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─── Search ───────────────────────────── -->
+      <section class="view" id="view-search">
+        <div class="search-container">
+          <div class="search-box">
+            <svg class="search-icon-input" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input type="text" id="search-input" placeholder="Tìm bài hát, nghệ sĩ..." autocomplete="off">
+            <button class="search-clear" id="search-clear" style="display:none">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+          <div class="search-suggestions" id="suggestions-container" style="display:none"></div>
+        </div>
+
+        <div class="search-results" id="search-results">
+          <div class="empty-state">
+            <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <p>Nhập tên bài hát để tìm kiếm</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─── Paste Link ───────────────────────── -->
+      <section class="view" id="view-paste">
+        <div class="paste-container">
+          <div class="paste-icon-big">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />
+              <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
+            </svg>
+          </div>
+          <h2>Dán Link YouTube Hoặc SoundCloud</h2>
+          <p>Dán link YouTube hoặc SoundCloud để phát nhạc ngay</p>
+          <div class="paste-input-wrap">
+            <input type="text" id="paste-input" placeholder="https://youtube.com/watch?v=..." autocomplete="off">
+            <button class="btn-primary" id="btn-paste-play">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="5 3 19 12 5 21 5 3" />
+              </svg>
+              Phát
+            </button>
+          </div>
+          <div class="paste-preview" id="paste-preview"></div>
+        </div>
+      </section>
+
+      <!-- ─── Room ─────────────────────────────── -->
+      <section class="view" id="view-room">
+        <div class="view-header">
+          <h2>🎧 Nghe chung</h2>
+          <p class="greeting-sub" id="room-sub">Mời bạn bè cùng nghe nhạc</p>
+        </div>
+
+        <!-- State 1: Setup / Lobby -->
+        <div id="room-setup-panel" class="room-panel" style="display:block;">
+          <div style="display:flex; gap:30px; height:calc(100vh - 200px);">
+            <!-- Cột Trái: Tạo & Tham gia -->
+            <div
+              style="flex:1; background:var(--glass); border-radius:var(--r-md); padding:30px; display:flex; flex-direction:column;">
+              <svg style="width:48px;height:48px;color:var(--accent);margin-bottom:20px;align-self:center;"
+                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+                <circle cx="9" cy="7" r="4" />
+                <path d="M23 21v-2a4 4 0 00-3-3.87" />
+                <path d="M16 3.13a4 4 0 010 7.75" />
+              </svg>
+              <h3 style="margin-bottom:10px;text-align:center;">Phòng Nhạc Chung</h3>
+              <p style="color:var(--text-secondary);margin-bottom:20px;text-align:center;font-size:14px;">Tạo phòng để
+                nghe nhạc cùng mọi người trên khắp thế giới.</p>
+
+              <div style="display:flex; gap:10px; margin-bottom:15px;">
+                <div class="paste-input-wrap" style="flex:1;"><input type="text" id="room-create-name"
+                    placeholder="Tên phòng (tuỳ chọn)" maxlength="30"></div>
+                <div class="paste-input-wrap" style="flex:1;"><input type="text" id="room-create-tags"
+                    placeholder="Tags: chill, lofi..." maxlength="50"></div>
+              </div>
+              <button class="btn-primary" id="btn-create-room" style="padding:12px 24px; width:100%;">Tạo phòng công
+                khai</button>
+
+              <div style="margin-top:30px; border-top: 1px dashed var(--border); padding-top:20px; text-align:center;">
+                <p style="margin-bottom:10px;font-size:14px;color:var(--text-secondary);">Hoặc vào phòng bằng mã kín:
+                </p>
+                <div class="paste-input-wrap" style="margin:0 auto; width:100%;">
+                  <input type="text" id="room-join-input" placeholder="Mã XYZ12..." autocomplete="off"
+                    style="text-transform:uppercase;">
+                  <button class="btn-primary" id="btn-join-room-code">Vào</button>
                 </div>
-                <button class="btn-primary" id="btn-create-room" style="padding:12px 24px; width:100%;">Tạo phòng công khai</button>
-                
-                <div style="margin-top:30px; border-top: 1px dashed var(--border); padding-top:20px; text-align:center;">
-                  <p style="margin-bottom:10px;font-size:14px;color:var(--text-secondary);">Hoặc vào phòng bằng mã kín:</p>
-                  <div class="paste-input-wrap" style="margin:0 auto; width:100%;">
-                    <input type="text" id="room-join-input" placeholder="Mã XYZ12..." autocomplete="off" style="text-transform:uppercase;">
-                    <button class="btn-primary" id="btn-join-room-code">Vào</button>
+              </div>
+            </div>
+
+            <!-- Cột Phải: Lobby Danh sách phòng -->
+            <div
+              style="flex:1; background:var(--glass); border-radius:var(--r-md); padding:30px; display:flex; flex-direction:column;">
+              <h3 style="margin-bottom:15px;"><i class="fas fa-globe"></i> Sảnh Cộng Đồng</h3>
+              <div class="paste-input-wrap" style="margin-bottom:20px; margin-top:0;">
+                <input type="text" id="lobby-search-input" placeholder="Tìm theo tên/tag (VD: chill)...">
+              </div>
+              <div id="lobby-rooms-list"
+                style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:10px; padding-right:5px;">
+                <!-- Public rooms injected here -->
+              </div>
+            </div>
+          </div>
+        </div>
+        <div id="room-active-panel" class="room-panel" style="display:none; height:calc(100vh - 180px); gap: 20px;">
+          <div class="room-left" style="flex:1; display:flex; flex-direction:column; min-width:0; gap:20px;">
+            <div class="room-info-card" style="background:var(--glass); border-radius:var(--r-md); padding:20px;">
+              <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                <div>
+                  <h3>Phòng: <span id="r-code"
+                      style="color:var(--accent);font-family:monospace;font-size:1.2em;">---</span></h3>
+                  <p style="margin-top:5px; color:var(--text-secondary);">Thành viên đang On: <span id="r-users-count"
+                      style="font-weight:bold;color:white;">1</span></p>
+                </div>
+                <div style="display:flex; gap:10px;">
+                  <button class="btn-text" id="btn-copy-room-link"
+                    style="border:1px solid var(--border); padding:8px 12px;"> Copy Link </button>
+                  <button class="btn-text" id="btn-leave-room"
+                    style="border:1px solid rgba(255,71,87,0.5); padding:8px 12px; color:#ff4757;"> Rời phòng </button>
+                </div>
+              </div>
+
+              <div id="host-controls"
+                style="margin-top:15px; border-top:1px dashed var(--border); padding-top:15px; display:none;">
+                <h4 style="color:gold;">👑 Cài đặt cho Host</h4>
+                <label
+                  style="display:flex; align-items:center; gap:10px; margin-top:10px; cursor:pointer; color:var(--text-secondary); font-size:14px;">
+                  <input type="checkbox" id="host-sync-mode" checked>
+                  <span>Đồng bộ 100% (Người khác nghe cùng vị trí bài hát với Host)</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="room-np-card"
+              style="background:var(--glass); border-radius:var(--r-md); padding:20px; display:flex; align-items:center; gap:20px; cursor:pointer;"
+              onclick="document.getElementById('pb-goto-np').click()">
+              <!-- Thumbnail with disc -->
+              <div style="position:relative; width:70px; height:70px; flex-shrink:0;">
+                <img id="room-np-thumb" src=""
+                  style="width:100%; height:100%; border-radius:50%; object-fit:cover; border:2px solid var(--accent); transition:0.3s;"
+                  onerror="this.src=''">
+                <div
+                  style="position:absolute; top:50%; left:50%; width:14px; height:14px; background:var(--bg); border-radius:50%; transform:translate(-50%, -50%);">
+                </div>
+              </div>
+              <!-- Info -->
+              <div style="flex:1; overflow:hidden;">
+                <h3 id="room-np-title"
+                  style="margin-bottom:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:16px; font-weight:600;">
+                  Đang không phát</h3>
+                <p id="room-np-artist"
+                  style="color:var(--text-secondary); font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                  ---</p>
+              </div>
+              <!-- Controls -->
+              <div style="display:flex; gap:12px; align-items:center;" onclick="event.stopPropagation()">
+                <button class="pb-ctrl" id="room-btn-prev" style="width:36px; height:36px; padding:8px;"><svg
+                    viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polygon points="19 20 9 12 19 4 19 20" />
+                    <line x1="5" y1="19" x2="5" y2="5" />
+                  </svg></button>
+                <button class="pb-ctrl pb-play" id="room-btn-play"
+                  style="width:46px; height:46px; padding:12px; background:var(--accent); color:white; border-radius:50%;"><svg
+                    viewBox="0 0 24 24" fill="currentColor">
+                    <polygon points="6 3 20 12 6 21 6 3" />
+                  </svg></button>
+                <button class="pb-ctrl" id="room-btn-next" style="width:36px; height:36px; padding:8px;"><svg
+                    viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polygon points="5 4 15 12 5 20 5 4" />
+                    <line x1="19" y1="5" x2="19" y2="19" />
+                  </svg></button>
+              </div>
+            </div>
+
+            <div
+              style="flex:1; background:var(--glass); border-radius:var(--r-md); display:flex; flex-direction:column; overflow:hidden;">
+              <div class="room-queue-card"
+                style="flex:1; background:var(--glass); border-radius:var(--r-md); padding:20px; overflow-y:auto; display:flex; flex-direction:column;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                  <h3 style="margin:0;">Hàng chờ phòng</h3>
+                  <div style="display:flex; gap:10px;">
+                    <button class="btn-text" id="btn-room-go-search"
+                      style="font-size:13px; padding:6px 12px; background:rgba(255,255,255,0.1); border-radius:20px;"><i
+                        class="fas fa-search"></i> Tìm bài</button>
+                    <button class="btn-text" id="btn-room-go-paste"
+                      style="font-size:13px; padding:6px 12px; background:rgba(255,255,255,0.1); border-radius:20px;"><i
+                        class="fas fa-link"></i> Dán Link</button>
                   </div>
                 </div>
-              </div>
-
-              <!-- Cột Phải: Lobby Danh sách phòng -->
-              <div style="flex:1; background:var(--glass); border-radius:var(--r-md); padding:30px; display:flex; flex-direction:column;">
-                <h3 style="margin-bottom:15px;"><i class="fas fa-globe"></i> Sảnh Cộng Đồng</h3>
-                <div class="paste-input-wrap" style="margin-bottom:20px; margin-top:0;">
-                  <input type="text" id="lobby-search-input" placeholder="Tìm theo tên/tag (VD: chill)...">
-                </div>
-                <div id="lobby-rooms-list" style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:10px; padding-right:5px;">
-                   <!-- Public rooms injected here -->
+                <div id="room-queue-container" style="display:flex; flex-direction:column; gap:10px; flex:1;">
+                  <div class="empty-state small">Hàng chờ phòng trống. Cứ tìm bài và phát nhé!</div>
                 </div>
               </div>
             </div>
           </div>
-      <div id="room-active-panel" class="room-panel" style="display:none; height:calc(100vh - 180px); gap: 20px;">
-        <div class="room-left" style="flex:1; display:flex; flex-direction:column; min-width:0; gap:20px;">
-          <div class="room-info-card" style="background:var(--glass); border-radius:var(--r-md); padding:20px;">
-            <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-              <div>
-                <h3>Phòng: <span id="r-code" style="color:var(--accent);font-family:monospace;font-size:1.2em;">---</span></h3>
-                <p style="margin-top:5px; color:var(--text-secondary);">Thành viên đang On: <span id="r-users-count" style="font-weight:bold;color:white;">1</span></p>
-              </div>
-              <div style="display:flex; gap:10px;">
-                <button class="btn-text" id="btn-copy-room-link" style="border:1px solid var(--border); padding:8px 12px;"> Copy Link </button>
-                <button class="btn-text" id="btn-leave-room" style="border:1px solid rgba(255,71,87,0.5); padding:8px 12px; color:#ff4757;"> Rời phòng </button>
-              </div>
-            </div>
-            
-            <div id="host-controls" style="margin-top:15px; border-top:1px dashed var(--border); padding-top:15px; display:none;">
-              <h4 style="color:gold;">👑 Cài đặt cho Host</h4>
-              <label style="display:flex; align-items:center; gap:10px; margin-top:10px; cursor:pointer; color:var(--text-secondary); font-size:14px;">
-                <input type="checkbox" id="host-sync-mode" checked>
-                <span>Đồng bộ 100% (Người khác nghe cùng vị trí bài hát với Host)</span>
-              </label>
-            </div>
-          </div>
-          
-          <div class="room-np-card" style="background:var(--glass); border-radius:var(--r-md); padding:20px; display:flex; align-items:center; gap:20px; cursor:pointer;" onclick="document.getElementById('pb-goto-np').click()">
-             <!-- Thumbnail with disc -->
-             <div style="position:relative; width:70px; height:70px; flex-shrink:0;">
-               <img id="room-np-thumb" src="" style="width:100%; height:100%; border-radius:50%; object-fit:cover; border:2px solid var(--accent); transition:0.3s;" onerror="this.src=''">
-               <div style="position:absolute; top:50%; left:50%; width:14px; height:14px; background:var(--bg); border-radius:50%; transform:translate(-50%, -50%);"></div>
-             </div>
-             <!-- Info -->
-             <div style="flex:1; overflow:hidden;">
-                <h3 id="room-np-title" style="margin-bottom:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:16px; font-weight:600;">Đang không phát</h3>
-                <p id="room-np-artist" style="color:var(--text-secondary); font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">---</p>
-             </div>
-             <!-- Controls -->
-             <div style="display:flex; gap:12px; align-items:center;" onclick="event.stopPropagation()">
-                <button class="pb-ctrl" id="room-btn-prev" style="width:36px; height:36px; padding:8px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5"/></svg></button>
-                <button class="pb-ctrl pb-play" id="room-btn-play" style="width:46px; height:46px; padding:12px; background:var(--accent); color:white; border-radius:50%;"><svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6 3 20 12 6 21 6 3"/></svg></button>
-                <button class="pb-ctrl" id="room-btn-next" style="width:36px; height:36px; padding:8px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg></button>
-             </div>
-          </div>
 
-          <div style="flex:1; background:var(--glass); border-radius:var(--r-md); display:flex; flex-direction:column; overflow:hidden;">
-            <div class="room-queue-card" style="flex:1; background:var(--glass); border-radius:var(--r-md); padding:20px; overflow-y:auto; display:flex; flex-direction:column;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
-              <h3 style="margin:0;">Hàng chờ phòng</h3>
-              <div style="display:flex; gap:10px;">
-                <button class="btn-text" id="btn-room-go-search" style="font-size:13px; padding:6px 12px; background:rgba(255,255,255,0.1); border-radius:20px;"><i class="fas fa-search"></i> Tìm bài</button>
-                <button class="btn-text" id="btn-room-go-paste" style="font-size:13px; padding:6px 12px; background:rgba(255,255,255,0.1); border-radius:20px;"><i class="fas fa-link"></i> Dán Link</button>
-              </div>
-            </div>
-            <div id="room-queue-container" style="display:flex; flex-direction:column; gap:10px; flex:1;">
-              <div class="empty-state small">Hàng chờ phòng trống. Cứ tìm bài và phát nhé!</div>
-            </div>
-          </div>
-        </div>
-        </div>
-
-        <div class="room-right" style="width: 320px; background:var(--glass); border-radius:var(--r-md); display:flex; flex-direction:column; overflow:hidden;">
+          <div class="room-right"
+            style="width: 320px; background:var(--glass); border-radius:var(--r-md); display:flex; flex-direction:column; overflow:hidden;">
             <div class="queue-header" style="border-bottom:1px solid var(--border);">
               <h3>Trò chuyện</h3>
             </div>
-            <div id="room-chat-messages" style="flex:1; padding:15px; overflow-y:auto; display:flex; flex-direction:column; gap:12px;">
-              <div style="font-size:12px; color:var(--text-secondary); text-align:center;">Chào mừng bạn đến phòng nhạc!</div>
+            <div id="room-chat-messages"
+              style="flex:1; padding:15px; overflow-y:auto; display:flex; flex-direction:column; gap:12px;">
+              <div style="font-size:12px; color:var(--text-secondary); text-align:center;">Chào mừng bạn đến phòng nhạc!
+              </div>
             </div>
             <div style="padding:15px; border-top:1px solid var(--border);">
-              <div style="display:flex; justify-content:space-between; margin-bottom:10px; user-select: none; -webkit-user-select: none;">
+              <div
+                style="display:flex; justify-content:space-between; margin-bottom:10px; user-select: none; -webkit-user-select: none;">
                 <button class="btn-reaction" data-emoji="❤️">❤️</button>
                 <button class="btn-reaction" data-emoji="🔥">🔥</button>
                 <button class="btn-reaction" data-emoji="🎵">🎵</button>
@@ -257,220 +359,315 @@
                 <button class="btn-reaction" data-emoji="😎">😎</button>
               </div>
               <form id="room-chat-form" style="display:flex; gap:10px;">
-                <input type="text" id="room-chat-input" placeholder="Aa..." autocomplete="off" style="flex:1; padding:10px; border-radius:20px; border:1px solid var(--border); background:rgba(255,255,255,0.05); color:white; outline:none;">
+                <input type="text" id="room-chat-input" placeholder="Aa..." autocomplete="off"
+                  style="flex:1; padding:10px; border-radius:20px; border:1px solid var(--border); background:rgba(255,255,255,0.05); color:white; outline:none;">
                 <button type="submit" class="btn-primary" style="padding:0 15px; border-radius:20px;">Gửi</button>
               </form>
             </div>
+          </div>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <!-- ─── Favorites ────────────────────────── -->
-    <section class="view" id="view-favorites">
-      <div class="view-header">
-        <h2>❤️ Yêu thích</h2>
-        <p class="greeting-sub" id="fav-sub">0 bài hát</p>
-      </div>
-      <div class="search-results" id="favorites-list">
-        <div class="empty-state">
-          <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>
-          <p>Chưa có bài hát yêu thích nào</p>
+      <!-- ─── Favorites ────────────────────────── -->
+      <section class="view" id="view-favorites">
+        <div class="view-header">
+          <h2>❤️ Yêu thích</h2>
+          <p class="greeting-sub" id="fav-sub">0 bài hát</p>
         </div>
-      </div>
-    </section>
-
-    <!-- ─── Playlist View ─────────────────────── -->
-    <section class="view" id="view-playlist">
-      <div class="view-header" style="display:flex;align-items:center;gap:12px;justify-content:space-between;">
-        <div>
-          <h2 id="playlist-view-title">Playlist</h2>
-          <p class="greeting-sub" id="playlist-view-sub">0 bài hát</p>
+        <div class="search-results" id="favorites-list">
+          <div class="empty-state">
+            <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path
+                d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" />
+            </svg>
+            <p>Chưa có bài hát yêu thích nào</p>
+          </div>
         </div>
-        <button class="btn-primary" id="btn-playlist-play-all" style="padding:8px 18px;font-size:12px;">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-          Phát tất cả
-        </button>
-      </div>
-      <div class="search-results" id="playlist-songs-list">
-        <div class="empty-state"><p>Playlist trống</p></div>
-      </div>
-    </section>
+      </section>
 
-    <!-- ─── Now Playing ──────────────────────── -->
-    <section class="view" id="view-nowplaying">
-      <div class="nowplaying-layout">
-        <div class="np-left">
-          <div class="visualizer-wrapper">
-            <div id="galaxy-container" style="display:none"></div>
-            <div class="np-artwork-container">
-              <div class="np-disc" id="np-disc">
-                <canvas id="np-visualizer"></canvas>
-                <img class="np-artwork" id="np-artwork" src="" alt="artwork">
-                <div class="np-disc-hole"></div>
+      <!-- ─── Playlist View ─────────────────────── -->
+      <section class="view" id="view-playlist">
+        <div class="view-header" style="display:flex;align-items:center;gap:12px;justify-content:space-between;">
+          <div>
+            <h2 id="playlist-view-title">Playlist</h2>
+            <p class="greeting-sub" id="playlist-view-sub">0 bài hát</p>
+          </div>
+          <button class="btn-primary" id="btn-playlist-play-all" style="padding:8px 18px;font-size:12px;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="5 3 19 12 5 21 5 3" />
+            </svg>
+            Phát tất cả
+          </button>
+        </div>
+        <div class="search-results" id="playlist-songs-list">
+          <div class="empty-state">
+            <p>Playlist trống</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─── Now Playing ──────────────────────── -->
+      <section class="view" id="view-nowplaying">
+        <div class="nowplaying-layout">
+          <div class="np-left">
+            <div class="visualizer-wrapper">
+              <div id="galaxy-container" style="display:none"></div>
+              <div class="np-artwork-container">
+                <div class="np-disc" id="np-disc">
+                  <canvas id="np-visualizer"></canvas>
+                  <img class="np-artwork" id="np-artwork" src="" alt="artwork">
+                  <div class="np-disc-hole"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="np-actions" id="np-top-actions">
+              <button class="np-action-btn" id="np-btn-home" title="Trang chủ">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+                  <polyline points="9 22 9 12 15 12 15 22" />
+                </svg>
+              </button>
+              <button class="np-action-btn" id="np-btn-fav" title="Yêu thích">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path
+                    d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" />
+                </svg>
+              </button>
+              <button class="np-action-btn" id="np-btn-add-playlist" title="Thêm vào playlist">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="16" />
+                  <line x1="8" y1="12" x2="16" y2="12" />
+                </svg>
+              </button>
+              <button class="np-action-btn" id="np-btn-share" title="Chia sẻ">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="18" cy="5" r="3" />
+                  <circle cx="6" cy="12" r="3" />
+                  <circle cx="18" cy="19" r="3" />
+                  <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+                  <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+                </svg>
+              </button>
+              <button class="np-action-btn" id="np-btn-menu" title="More">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="1" />
+                  <circle cx="19" cy="12" r="1" />
+                  <circle cx="5" cy="12" r="1" />
+                </svg>
+              </button>
+            </div>
+
+            <div class="np-info">
+              <div class="np-title" id="np-title">---</div>
+              <div class="np-artist" id="np-artist">---</div>
+            </div>
+
+            <div class="np-progress">
+              <span class="np-time" id="np-current-time">0:00</span>
+              <div class="np-progress-bar" id="np-progress-bar">
+                <div class="np-progress-fill" id="np-progress-fill"></div>
+                <div class="np-progress-thumb"></div>
+              </div>
+              <span class="np-time" id="np-duration">0:00</span>
+            </div>
+
+            <div class="np-controls">
+              <button class="np-ctrl-btn" id="np-btn-shuffle" title="Shuffle">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="16 3 21 3 21 8" />
+                  <line x1="4" y1="20" x2="21" y2="3" />
+                  <polyline points="21 16 21 21 16 21" />
+                  <line x1="15" y1="15" x2="21" y2="21" />
+                  <line x1="4" y1="4" x2="9" y2="9" />
+                </svg>
+              </button>
+              <button class="np-ctrl-btn" id="np-btn-prev" title="Previous">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polygon points="19 20 9 12 19 4 19 20" />
+                  <line x1="5" y1="19" x2="5" y2="5" />
+                </svg>
+              </button>
+              <button class="np-ctrl-btn np-play-btn" id="np-btn-play">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <polygon points="6 3 20 12 6 21 6 3" />
+                </svg>
+              </button>
+              <button class="np-ctrl-btn" id="np-btn-next" title="Next">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polygon points="5 4 15 12 5 20 5 4" />
+                  <line x1="19" y1="5" x2="19" y2="19" />
+                </svg>
+              </button>
+              <button class="np-ctrl-btn" id="np-btn-repeat" title="Repeat">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="17 1 21 5 17 9" />
+                  <path d="M3 11V9a4 4 0 014-4h14" />
+                  <polyline points="7 23 3 19 7 15" />
+                  <path d="M21 13v2a4 4 0 01-4 4H3" />
+                </svg>
+              </button>
+            </div>
+
+            <div class="np-volume">
+              <button class="np-ctrl-btn" id="np-btn-volume">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                  <path d="M19.07 4.93a10 10 0 010 14.14M15.54 8.46a5 5 0 010 7.07" />
+                </svg>
+              </button>
+              <div class="volume-slider-wrap">
+                <input type="range" class="volume-slider" id="np-volume-slider" min="0" max="100" value="100">
+              </div>
+            </div>
+
+            <div class="np-actions">
+              <button class="np-action-btn" id="np-toggle-fav" title="Yêu thích">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path
+                    d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" />
+                </svg>
+              </button>
+              <button class="np-action-btn" id="np-toggle-queue" title="Hàng chờ">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="8" y1="6" x2="21" y2="6" />
+                  <line x1="8" y1="12" x2="21" y2="12" />
+                  <line x1="8" y1="18" x2="21" y2="18" />
+                  <line x1="3" y1="6" x2="3.01" y2="6" />
+                  <line x1="3" y1="12" x2="3.01" y2="12" />
+                  <line x1="3" y1="18" x2="3.01" y2="18" />
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Queue / Suggest panel -->
+          <div class="np-right">
+            <div class="np-queue-panel">
+              <div class="queue-header">
+                <h3>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="8" y1="6" x2="21" y2="6" />
+                    <line x1="8" y1="12" x2="21" y2="12" />
+                    <line x1="8" y1="18" x2="21" y2="18" />
+                    <line x1="3" y1="6" x2="3.01" y2="6" />
+                    <line x1="3" y1="12" x2="3.01" y2="12" />
+                    <line x1="3" y1="18" x2="3.01" y2="18" />
+                  </svg>
+                  Hàng chờ
+                </h3>
+                <button class="btn-text" id="btn-clear-queue">Xóa tất cả</button>
+              </div>
+              <div class="queue-list" id="queue-container">
+                <div class="empty-state small">
+                  <p>Chưa có bài hát nào</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="np-suggest-panel">
+              <div class="suggest-header">
+                <h3>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M9 18V5l12-2v13" />
+                    <circle cx="6" cy="18" r="3" />
+                    <circle cx="18" cy="16" r="3" />
+                  </svg>
+                  Gợi ý
+                </h3>
+              </div>
+              <div class="suggest-list" id="suggest-container">
+                <div class="empty-state small">
+                  <p>Phát bài hát để nhận gợi ý</p>
+                </div>
               </div>
             </div>
           </div>
-
-          <div class="np-actions" id="np-top-actions">
-            <button class="np-action-btn" id="np-btn-home" title="Trang chủ">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-            </button>
-            <button class="np-action-btn" id="np-btn-fav" title="Yêu thích">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>
-            </button>
-            <button class="np-action-btn" id="np-btn-add-playlist" title="Thêm vào playlist">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
-            </button>
-            <button class="np-action-btn" id="np-btn-share" title="Chia sẻ">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-            </button>
-            <button class="np-action-btn" id="np-btn-menu" title="More">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
-            </button>
-          </div>
-
-          <div class="np-info">
-            <div class="np-title" id="np-title">---</div>
-            <div class="np-artist" id="np-artist">---</div>
-          </div>
-
-          <div class="np-progress">
-            <span class="np-time" id="np-current-time">0:00</span>
-            <div class="np-progress-bar" id="np-progress-bar">
-              <div class="np-progress-fill" id="np-progress-fill"></div>
-              <div class="np-progress-thumb"></div>
-            </div>
-            <span class="np-time" id="np-duration">0:00</span>
-          </div>
-
-          <div class="np-controls">
-            <button class="np-ctrl-btn" id="np-btn-shuffle" title="Shuffle">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>
-            </button>
-            <button class="np-ctrl-btn" id="np-btn-prev" title="Previous">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5"/></svg>
-            </button>
-            <button class="np-ctrl-btn np-play-btn" id="np-btn-play">
-              <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6 3 20 12 6 21 6 3"/></svg>
-            </button>
-            <button class="np-ctrl-btn" id="np-btn-next" title="Next">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>
-            </button>
-            <button class="np-ctrl-btn" id="np-btn-repeat" title="Repeat">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>
-            </button>
-          </div>
-
-          <div class="np-volume">
-            <button class="np-ctrl-btn" id="np-btn-volume">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 010 14.14M15.54 8.46a5 5 0 010 7.07"/></svg>
-            </button>
-            <div class="volume-slider-wrap">
-              <input type="range" class="volume-slider" id="np-volume-slider" min="0" max="100" value="100">
-            </div>
-          </div>
-
-          <div class="np-actions">
-            <button class="np-action-btn" id="np-toggle-fav" title="Yêu thích">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>
-            </button>
-            <button class="np-action-btn" id="np-toggle-queue" title="Hàng chờ">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
-            </button>
-          </div>
         </div>
+      </section>
 
-        <!-- Queue / Suggest panel -->
-        <div class="np-right">
-          <div class="np-queue-panel">
-            <div class="queue-header">
-              <h3>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
-                Hàng chờ
-              </h3>
-              <button class="btn-text" id="btn-clear-queue">Xóa tất cả</button>
+      <!-- ─── Bottom Player Bar ────────────────── -->
+      <div class="player-bar" id="player-bar" style="display:none">
+        <div class="pb-progress" id="pb-progress">
+          <div class="pb-progress-fill" id="pb-progress-fill"></div>
+        </div>
+        <div class="pb-content">
+          <div class="pb-left" id="pb-goto-np">
+            <img class="pb-thumbnail" id="pb-thumb" src="" alt="">
+            <div class="pb-info">
+              <span class="pb-title" id="pb-title">---</span>
+              <span class="pb-artist" id="pb-artist">---</span>
             </div>
-            <div class="queue-list" id="queue-container">
-              <div class="empty-state small"><p>Chưa có bài hát nào</p></div>
-            </div>
+            <button class="pb-action-btn" id="pb-fav">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path
+                  d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" />
+              </svg>
+            </button>
           </div>
 
-          <div class="np-suggest-panel">
-            <div class="suggest-header">
-              <h3>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
-                Gợi ý
-              </h3>
+          <div class="pb-center">
+            <button class="pb-ctrl" id="pb-prev">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="19 20 9 12 19 4 19 20" />
+                <line x1="5" y1="19" x2="5" y2="5" />
+              </svg>
+            </button>
+            <button class="pb-ctrl pb-play" id="pb-play">
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <polygon points="6 3 20 12 6 21 6 3" />
+              </svg>
+            </button>
+            <button class="pb-ctrl" id="pb-next">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="5 4 15 12 5 20 5 4" />
+                <line x1="19" y1="5" x2="19" y2="19" />
+              </svg>
+            </button>
+          </div>
+
+          <div class="pb-right">
+            <span class="pb-time" id="pb-time">0:00 / 0:00</span>
+            <div class="pb-volume-wrap">
+              <button class="pb-ctrl" id="pb-volume-btn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                  <path d="M19.07 4.93a10 10 0 010 14.14M15.54 8.46a5 5 0 010 7.07" />
+                </svg>
+              </button>
+              <input type="range" class="volume-slider mini" id="pb-volume" min="0" max="100" value="100">
             </div>
-            <div class="suggest-list" id="suggest-container">
-              <div class="empty-state small"><p>Phát bài hát để nhận gợi ý</p></div>
-            </div>
+            <button class="pb-action-btn" id="pb-expand" title="Mở rộng">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="15 3 21 3 21 9" />
+                <polyline points="9 21 3 21 3 15" />
+                <line x1="21" y1="3" x2="14" y2="10" />
+                <line x1="3" y1="21" x2="10" y2="14" />
+              </svg>
+            </button>
           </div>
         </div>
       </div>
-    </section>
 
-    <!-- ─── Bottom Player Bar ────────────────── -->
-    <div class="player-bar" id="player-bar" style="display:none">
-      <div class="pb-progress" id="pb-progress">
-        <div class="pb-progress-fill" id="pb-progress-fill"></div>
-      </div>
-      <div class="pb-content">
-        <div class="pb-left" id="pb-goto-np">
-          <img class="pb-thumbnail" id="pb-thumb" src="" alt="">
-          <div class="pb-info">
-            <span class="pb-title" id="pb-title">---</span>
-            <span class="pb-artist" id="pb-artist">---</span>
-          </div>
-          <button class="pb-action-btn" id="pb-fav">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>
-          </button>
-        </div>
+    </main>
+  </div>
 
-        <div class="pb-center">
-          <button class="pb-ctrl" id="pb-prev">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5"/></svg>
-          </button>
-          <button class="pb-ctrl pb-play" id="pb-play">
-            <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6 3 20 12 6 21 6 3"/></svg>
-          </button>
-          <button class="pb-ctrl" id="pb-next">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>
-          </button>
-        </div>
+  <!-- Toast Container -->
+  <div id="toast-container" class="toast-container"></div>
+  <div class="toast-container" id="toast-container"></div>
 
-        <div class="pb-right">
-          <span class="pb-time" id="pb-time">0:00 / 0:00</span>
-          <div class="pb-volume-wrap">
-            <button class="pb-ctrl" id="pb-volume-btn">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 010 14.14M15.54 8.46a5 5 0 010 7.07"/></svg>
-            </button>
-            <input type="range" class="volume-slider mini" id="pb-volume" min="0" max="100" value="100">
-          </div>
-          <button class="pb-action-btn" id="pb-expand" title="Mở rộng">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
-          </button>
-        </div>
-      </div>
-    </div>
+  <!-- Modal -->
+  <div class="modal-overlay" id="modal-overlay" style="display:none">
+    <div class="modal" id="modal-content"></div>
+  </div>
 
-  </main>
-</div>
+  <!-- Audio Element -->
+  <audio id="audio-player" preload="auto"></audio>
 
-<!-- Toast Container -->
-<div id="toast-container" class="toast-container"></div>
-<div class="toast-container" id="toast-container"></div>
-
-<!-- Modal -->
-<div class="modal-overlay" id="modal-overlay" style="display:none">
-  <div class="modal" id="modal-content"></div>
-</div>
-
-<!-- Audio Element -->
-<audio id="audio-player" preload="auto"></audio>
-
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="js/app.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/app.js"></script>
 </body>
+
 </html>

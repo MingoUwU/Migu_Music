@@ -754,6 +754,7 @@
 
     if (view === 'search') setTimeout(() => $('#search-input')?.focus(), 100);
     if (view === 'favorites') renderFavoritesList();
+
     resetIdle();
   }
 
@@ -1155,8 +1156,10 @@
   let source = null;
 
   // Three.js Galaxy Variables
-  let gScene, gCamera, gRenderer, gParticles, gGeometry, gMaterial;
-  const starCount = 1500;
+  let gScene, gCamera, gRenderer, gParticles, gGeometry, gMaterial, gCore;
+  const starCount = 2800; // Even more stars!
+  let mouseX = 0, mouseY = 0;
+  let pulseIntensity = 0;
 
   function setupVisualizer() {
     const canvas = $('#np-visualizer');
@@ -1183,6 +1186,15 @@
     window.addEventListener('click', initCtx);
     window.addEventListener('keydown', initCtx);
 
+    // Mouse movement for galaxy tilt
+    window.addEventListener('mousemove', (e) => {
+        const rect = $('#view-nowplaying')?.getBoundingClientRect();
+        if (rect) {
+            mouseX = (e.clientX - (rect.left + rect.width / 2)) / (rect.width / 2);
+            mouseY = (e.clientY - (rect.top + rect.height / 2)) / (rect.height / 2);
+        }
+    });
+
     $('#np-btn-menu')?.addEventListener('click', () => toggleVisualizerMode());
 
     // Initial UI state
@@ -1199,6 +1211,10 @@
     function drawVisualizer() {
       if (!analyser) return;
       requestAnimationFrame(drawVisualizer);
+
+      // Only render if we are in Now Playing view AND it is visible
+      const galaxy = $('#galaxy-container');
+      if (state.currentView !== 'nowplaying' || !galaxy || galaxy.offsetWidth === 0) return;
 
       if (state.visualizerMode === '3d') {
         updateGalaxy();
@@ -1239,7 +1255,6 @@
   function initGalaxy() {
     if (gRenderer) return;
     const container = $('#galaxy-container');
-    // Ensure we have dimensions even if container is hidden
     const w = container.offsetWidth || 500;
     const h = container.offsetHeight || 500;
 
@@ -1252,7 +1267,7 @@
     gRenderer.setSize(w, h);
     container.appendChild(gRenderer.domElement);
 
-    // Create a SHARPER circular glow texture
+    // Create a circular glow texture
     const canvas = document.createElement('canvas');
     canvas.width = 64; canvas.height = 64;
     const ctx = canvas.getContext('2d');
@@ -1284,12 +1299,12 @@
         const randomZ = (Math.pow(Math.random(), 3) * (Math.random() < 0.5 ? 1 : -1) * 0.3) * radius;
 
         positions[i3] = Math.cos(branchAngle + spinAngle) * radius + randomX;
-        positions[i3 + 1] = randomY * 0.5; // Slightly flatter
+        positions[i3 + 1] = randomY * 0.5; 
         positions[i3 + 2] = Math.sin(branchAngle + spinAngle) * radius + randomZ;
 
         const mixedColor = new THREE.Color();
-        const colorInside = new THREE.Color('#ff0099'); // Brighter Pink
-        const colorOutside = new THREE.Color('#00ccff'); // Solid Cyan
+        const colorInside = new THREE.Color('#ff0099'); 
+        const colorOutside = new THREE.Color('#00ccff');
         mixedColor.lerpColors(colorInside, colorOutside, radius / 5);
 
         colors[i3] = mixedColor.r;
@@ -1303,27 +1318,46 @@
     gGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
     gMaterial = new THREE.PointsMaterial({
-      size: 0.15, // Slightly larger
+      size: 0.18,
       sizeAttenuation: true,
       vertexColors: true,
       transparent: true,
       map: texture,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
-      opacity: 1 // Max opacity for blending
+      opacity: 1
     });
 
     gParticles = new THREE.Points(gGeometry, gMaterial);
     gScene.add(gParticles);
 
-    // Dynamic resize handler
-    window.addEventListener('resize', () => {
-        const nw = container.offsetWidth;
-        const nh = container.offsetHeight;
-        gCamera.aspect = nw / nh;
-        gCamera.updateProjectionMatrix();
-        gRenderer.setSize(nw, nh);
+    // Create a BRIGHTER center star
+    const coreGeom = new THREE.BufferGeometry();
+    coreGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array([0, 0, 0]), 3));
+    const coreMat = new THREE.PointsMaterial({
+        size: 3.5, // Even bigger
+        map: texture,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        color: 0xffffff,
+        depthWrite: false,
+        opacity: 1
     });
+    gCore = new THREE.Points(coreGeom, coreMat);
+    gScene.add(gCore);
+
+    // Robust Resize handling using ResizeObserver
+    const ro = new ResizeObserver(() => {
+        const w = container.offsetWidth || 500;
+        const h = container.offsetHeight || 500;
+        if (w > 0 && h > 0) {
+            gRenderer.setSize(w, h);
+            gCamera.aspect = w / h;
+            gCamera.updateProjectionMatrix();
+            console.log('[MiGu] 3D Visualizer Adaptive Resize:', w, 'x', h);
+        }
+    });
+    ro.observe(container);
   }
 
   function updateGalaxy() {
@@ -1335,16 +1369,42 @@
     for (let i = 0; i < 16; i++) average += dataArray[i]; // Bass
     average /= 16;
 
+    // Bass Detection for "Supernova" Pulse
+    if (average > 210) pulseIntensity = 1.0;
+    else pulseIntensity *= 0.92; // Decay
+
     const lerpPulse = (average / 255);
-    const targetScale = 1 + lerpPulse * 0.8;
+    const targetScale = (1 + lerpPulse * 0.8) + pulseIntensity * 0.6;
+    
     gParticles.scale.set(
         THREE.MathUtils.lerp(gParticles.scale.x, targetScale, 0.1),
         THREE.MathUtils.lerp(gParticles.scale.y, targetScale, 0.1),
         THREE.MathUtils.lerp(gParticles.scale.z, targetScale, 0.1)
     );
 
-    gParticles.rotation.y += 0.003 + lerpPulse * 0.02;
-    gParticles.rotation.x = THREE.MathUtils.lerp(gParticles.rotation.x, 0.5 + lerpPulse * 0.3, 0.05);
+    // Dynamic Core Pulse & Color
+    if (gCore) {
+        gCore.material.size = 3.5 + pulseIntensity * 5; // Surge more!
+        gCore.material.opacity = 1; 
+        
+        // Lerp color between Pink and Cyan
+        const c1 = new THREE.Color('#ff0099');
+        const c2 = new THREE.Color('#00ccff');
+        gCore.material.color.lerpColors(c1, c2, 0.5 + (Math.sin(Date.now() * 0.002) * 0.5));
+        
+        // More dramatic flash
+        if (pulseIntensity > 0.7) gCore.material.color.set('#ffffff');
+    }
+
+    // Interaction & Rotation
+    gParticles.rotation.y += 0.003 + lerpPulse * 0.02 + pulseIntensity * 0.05;
+    
+    // Mouse Gravity Tilt
+    const targetRotX = 0.5 + lerpPulse * 0.3 + (mouseY * 0.4);
+    const targetRotY = (mouseX * 0.4);
+    
+    gParticles.rotation.x = THREE.MathUtils.lerp(gParticles.rotation.x, targetRotX, 0.05);
+    gParticles.rotation.z = THREE.MathUtils.lerp(gParticles.rotation.z, targetRotY, 0.05);
 
     gRenderer.render(gScene, gCamera);
   }
