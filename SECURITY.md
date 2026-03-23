@@ -13,7 +13,7 @@ We currently provide security updates for the following versions:
 
 If you discover a security vulnerability within this project, please do not disclose it publicly. Instead, please report it via one of the following methods:
 
-1. **Email:** Send a detailed report to [ngueyntrungnam567@gmail.com](mailto:trungnamnguyen567@gmail.com).
+1. **Email:** Send a detailed report to [trungnamnguyen567@gmail.com](mailto:trungnamnguyen567@gmail.com).
 2. **GitHub:** If available, use the "Report a vulnerability" button in the "Security" tab.
 
 ### What to include in your report:
