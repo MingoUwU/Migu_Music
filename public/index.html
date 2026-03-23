@@ -147,23 +147,31 @@
         <p class="greeting-sub" id="room-sub">Mời bạn bè cùng nghe nhạc</p>
       </div>
 
-      <div id="room-setup-panel" class="room-panel" style="display:block;">
-        <div style="background:var(--glass); border-radius:var(--r-md); padding:30px; text-align:center; max-width:500px; margin:0 auto; margin-top:50px;">
-          <svg style="width:64px;height:64px;color:var(--accent);margin-bottom:20px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
-          <h3 style="margin-bottom:10px;">Tạo phòng nhạc</h3>
-          <p style="color:var(--text-secondary);margin-bottom:20px;">Tạo một phòng nhạc để nghe cùng bạn bè. Bất kỳ ai có link đều có thể thêm bài hát.</p>
-          <button class="btn-primary" id="btn-create-room" style="padding:12px 24px;">Tạo phòng ngay</button>
-          
-          <div style="margin-top:30px; border-top: 1px dashed var(--border); padding-top:20px;">
-            <p style="margin-bottom:10px;">Hoặc tham gia phòng:</p>
-            <div class="paste-input-wrap" style="margin:0 auto;">
-              <input type="text" id="room-join-input" placeholder="Mã XYZ12..." autocomplete="off" style="text-transform:uppercase;">
-              <button class="btn-primary" id="btn-join-room-code">Tham gia</button>
+          <!-- State 1: Setup / Lobby -->
+          <div id="room-setup-panel" class="p-4" style="display: flex; flex-direction: column; height: 100%;">
+            <h2 style="margin-bottom: 16px;">Phòng Nhạc Chung</h2>
+            
+            <div style="margin-bottom: 24px;">
+              <input type="text" id="room-create-name" class="search-input" placeholder="Tên phòng (tuỳ chọn)" style="width: 100%; margin-bottom: 8px;" maxlength="30">
+              <input type="text" id="room-create-tags" class="search-input" placeholder="Tags: lofi, chill... (cách nhau dấu phẩy)" style="width: 100%; margin-bottom: 8px;" maxlength="50">
+              <button id="btn-create-room" class="btn btn-primary" style="width: 100%; padding: 12px; font-size: 16px;">Tạo phòng công khai</button>
+            </div>
+            
+            <div style="text-align: center; margin-bottom: 16px; opacity: 0.6; font-size: 12px; font-weight: bold;">HOẶC VÀO TỪ MÃ KÍN</div>
+            
+            <div style="display: flex; gap: 8px; margin-bottom: 24px;">
+              <input type="text" id="room-join-input" class="search-input" placeholder="Mã phòng..." style="flex: 1;">
+              <button id="btn-join-room-code" class="btn">Vào phòng</button>
+            </div>
+
+            <div style="margin-top: 8px; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between;">
+              <h3 style="font-size: 16px;"><i class="fas fa-globe"></i> Sảnh Cộng Đồng</h3>
+            </div>
+            <input type="text" id="lobby-search-input" class="search-input" placeholder="Tìm theo tên/tag (VD: chill)..." style="width: 100%; margin-bottom: 12px;">
+            <div id="lobby-rooms-list" style="flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 4px;">
+               <!-- Public rooms injected here -->
             </div>
           </div>
-        </div>
-      </div>
-
       <div id="room-active-panel" class="room-panel" style="display:none; height:calc(100vh - 180px); gap: 20px;">
         <div class="room-left" style="flex:1; display:flex; flex-direction:column; min-width:0; gap:20px;">
           <div class="room-info-card" style="background:var(--glass); border-radius:var(--r-md); padding:20px;">
@@ -188,11 +196,16 @@
           </div>
 
           <div style="flex:1; background:var(--glass); border-radius:var(--r-md); display:flex; flex-direction:column; overflow:hidden;">
-            <div class="queue-header" style="border-bottom:1px solid var(--border);">
-              <h3>Hàng chờ phòng</h3>
+            <div class="room-queue-card" style="flex:1; background:var(--glass); border-radius:var(--r-md); padding:20px; overflow-y:auto; display:flex; flex-direction:column;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+              <h3 style="margin:0;">Hàng chờ phòng</h3>
+              <div style="display:flex; gap:10px;">
+                <button class="btn-text" id="btn-room-go-search" style="font-size:13px; padding:6px 12px; background:rgba(255,255,255,0.1); border-radius:20px;"><i class="fas fa-search"></i> Tìm bài</button>
+                <button class="btn-text" id="btn-room-go-paste" style="font-size:13px; padding:6px 12px; background:rgba(255,255,255,0.1); border-radius:20px;"><i class="fas fa-link"></i> Dán Link</button>
+              </div>
             </div>
-            <div class="queue-list" id="room-queue-container" style="flex:1;">
-              <div class="empty-state small"><p>Hàng chờ phòng trống. Cứ tìm bài và phát nhé!</p></div>
+            <div id="room-queue-container" style="display:flex; flex-direction:column; gap:10px; flex:1;">
+              <div class="empty-state small">Hàng chờ phòng trống. Cứ tìm bài và phát nhé!</div>
             </div>
           </div>
         </div>
@@ -410,6 +423,20 @@
 </div>
 
 <!-- Toast Container -->
+  <!-- Sync Prompt Modal -->
+  <div id="sync-prompt-modal" class="modal">
+    <div class="modal-content" style="max-width: 400px; text-align: center; padding: 32px 24px;">
+      <h2 style="margin-bottom: 12px;">🎵 Chào mừng đến phòng</h2>
+      <p style="margin-bottom: 8px; color: var(--text-secondary);">Phòng đang phát dở bài nhạc này:</p>
+      <p id="sp-song-title" style="margin-bottom: 24px; font-weight: 600; font-size: 16px; color: var(--accent);">...</p>
+      <p style="margin-bottom: 24px; font-size: 14px;">Bạn muốn Đồng bộ nghe cùng Mood với chủ phòng để đỡ lạc điệu, hay muốn nghe bài này từ đầu?</p>
+      <div style="display: flex; gap: 12px; justify-content: center;">
+        <button id="btn-sync-yes" class="btn btn-primary" style="flex: 1;"><i class="fas fa-link"></i> Nghe cùng Mood</button>
+        <button id="btn-sync-no" class="btn" style="flex: 1;"><i class="fas fa-play"></i> Nghe từ đầu</button>
+      </div>
+    </div>
+  </div>
+
 <div class="toast-container" id="toast-container"></div>
 
 <!-- Modal -->

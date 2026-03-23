@@ -32,6 +32,15 @@
   let supabase = null;
   let roomChannel = null;
   const myUserId = 'user_' + Math.random().toString(36).substr(2, 9);
+  
+  // Public Rooms & Sync Prompt State
+  let globalLobbyChannel = null;
+  let activePublicRooms = [];
+  let userSyncChoice = null;
+  let hasShownSyncPrompt = false;
+
+  // Personal state backup when in room
+  let personalBackup = null;
 
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => document.querySelectorAll(sel);
@@ -158,6 +167,8 @@
     
     supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     console.log('[MiGu] Supabase initialized');
+    
+    setupGlobalLobby();
     checkUrlForRoom();
 
     // Setup UI hooks
@@ -165,6 +176,13 @@
       const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
       let code = '';
       for (let i = 0; i < 5; i++) code += chars.charAt(Math.floor(Math.random() * chars.length));
+      
+      const name = $('#room-create-name')?.value.trim() || 'Phòng ' + code;
+      const tags = $('#room-create-tags')?.value.trim() || '';
+      
+      window.currentRoomMetadata = { name, tags };
+      hasShownSyncPrompt = true; // Creator doesn't need prompt
+      
       joinRoomByCode(code, true);
     });
 
@@ -184,6 +202,28 @@
       }
       roomCode = null;
       isRoomHost = false;
+      hasShownSyncPrompt = false;
+      if (globalLobbyChannel) globalLobbyChannel.untrack().catch(()=>{});
+      
+      // Restore personal backup
+      if (personalBackup) {
+        state.queue = personalBackup.queue;
+        state.currentIndex = personalBackup.currentIndex;
+        state.currentSongInfo = personalBackup.currentSongInfo;
+        renderQueue();
+        if (state.currentSongInfo) {
+           updateUI(state.currentSongInfo);
+           audio.src = '/api/stream/' + state.currentSongInfo.videoId;
+           audio.load();
+           // we do not resume playback automatically when leaving
+        } else {
+           updateUI(null);
+           audio.src = '';
+           showBar(false);
+        }
+        personalBackup = null;
+      }
+
       $('#room-setup-panel').style.display = 'block';
       $('#room-active-panel').style.display = 'none';
       switchView('home');
@@ -224,6 +264,84 @@
         }
       });
     });
+
+    $('#btn-sync-yes')?.addEventListener('click', () => {
+       if (window.resolveSyncPrompt) window.resolveSyncPrompt('sync');
+    });
+    $('#btn-sync-no')?.addEventListener('click', () => {
+       if (window.resolveSyncPrompt) window.resolveSyncPrompt('start');
+    });
+
+    $('#btn-room-go-search')?.addEventListener('click', () => {
+       switchView('search');
+       const input = $('#search-input');
+       if (input) input.focus();
+    });
+
+    $('#btn-room-go-paste')?.addEventListener('click', () => {
+       switchView('paste');
+       const input = $('#paste-input');
+       if (input) input.focus();
+    });
+  }
+
+  function setupGlobalLobby() {
+    globalLobbyChannel = supabase.channel('global_lobby');
+    globalLobbyChannel
+      .on('presence', { event: 'sync' }, () => {
+        const state = globalLobbyChannel.presenceState();
+        activePublicRooms = [];
+        for (const [key, presences] of Object.entries(state)) {
+           if (presences[0] && presences[0].roomId) {
+              activePublicRooms.push(presences[0]);
+           }
+        }
+        renderLobbyRooms();
+      })
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+           console.log('[Lobby] Connected to global lobby');
+        }
+      });
+      
+    $('#lobby-search-input')?.addEventListener('input', () => {
+       renderLobbyRooms();
+    });
+  }
+
+  function renderLobbyRooms() {
+    const container = $('#lobby-rooms-list');
+    if (!container) return;
+    
+    const query = ($('#lobby-search-input')?.value || '').toLowerCase();
+    
+    const filtered = activePublicRooms.filter(r => {
+      return (r.name && r.name.toLowerCase().includes(query)) ||
+             (r.tags && r.tags.toLowerCase().includes(query)) ||
+             (r.roomId && r.roomId.toLowerCase().includes(query));
+    });
+    
+    if (filtered.length === 0) {
+      container.innerHTML = `<div class="empty-state small" style="opacity: 0.5;">Chưa có phòng nào đang mở. Hãy tạo phòng của bạn nhé!</div>`;
+      return;
+    }
+    
+    container.innerHTML = filtered.map(r => `
+      <div class="lobby-room-item" style="background: var(--surface); padding: 12px; border-radius: 8px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; border: 1px solid var(--border); transition: all 0.2s;" onclick="joinRoomFromLobby('${r.roomId}')" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+        <div>
+          <div style="font-weight: 600; font-size: 15px;">${esc(r.name)}</div>
+          <div style="font-size: 12px; color: var(--accent); margin-top: 6px;"><i class="fas fa-tag"></i> ${esc(r.tags) || 'Không có tag'}</div>
+        </div>
+        <div style="font-size: 13px; opacity: 0.8; text-align: right;">
+          <div style="margin-bottom: 4px;"><i class="fas fa-users"></i> ${r.usersCount || 1}</div>
+          <div style="font-family: monospace; font-size: 12px; background: rgba(0,0,0,0.2); padding: 2px 6px; border-radius: 4px;">Mã: ${r.roomId}</div>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  window.joinRoomFromLobby = function(code) {
+    if (code) joinRoomByCode(code);
   }
 
   function checkUrlForRoom() {
@@ -237,9 +355,30 @@
     }
   }
 
-  async function joinRoomByCode(code, isCreating = false) {
+  async function joinRoomByCode(code, isCreating = false, metadata = null) {
     if (roomChannel) {
       await supabase.removeChannel(roomChannel);
+    }
+    
+    // Backup personal queue
+    if (!personalBackup) {
+      personalBackup = {
+         queue: [...state.queue],
+         currentIndex: state.currentIndex,
+         currentSongInfo: state.currentSongInfo
+      };
+    }
+    
+    // If creating a room, start fresh
+    if (isCreating) {
+       state.queue = [];
+       state.currentIndex = -1;
+       state.currentSongInfo = null;
+       audio.src = '';
+       updateUI(null);
+       showBar(false);
+       renderQueue();
+       renderRoomQueue();
     }
     
     roomCode = code.toUpperCase();
@@ -270,8 +409,23 @@
         isRoomHost = (hostId === myUserId);
         $('#host-controls').style.display = isRoomHost ? 'block' : 'none';
         
-        if (isRoomHost && !wasHost && !isCreating) {
-           toast('Bạn đã trở thành Host', 'info');
+        if (isRoomHost) {
+           if (!wasHost && !isCreating) {
+              toast('Bạn đã trở thành Host', 'info');
+              window.currentRoomMetadata = { name: 'Phòng ' + roomCode, tags: '' };
+           }
+           if (globalLobbyChannel) {
+             globalLobbyChannel.track({
+               roomId: roomCode,
+               name: window.currentRoomMetadata?.name || 'Phòng ' + roomCode,
+               tags: window.currentRoomMetadata?.tags || '',
+               usersCount: users.length
+             }).catch(()=>{});
+           }
+        } else {
+           if (wasHost && globalLobbyChannel) {
+             globalLobbyChannel.untrack().catch(()=>{});
+           }
         }
       })
       .on('presence', { event: 'join' }, ({ key, newPresences }) => {
@@ -320,6 +474,39 @@
     if (update.currentSong !== undefined && update.currentSong !== null) {
       const isNewSong = !state.currentSongInfo || state.currentSongInfo.videoId !== update.currentSong.videoId;
       if (isNewSong) {
+        
+        if (!isRoomHost && !hasShownSyncPrompt && update.isPlaying) {
+          isProcessingRoomSync = true;
+          $('#sp-song-title').textContent = update.currentSong.title;
+          $('#sync-prompt-modal').classList.add('active');
+          
+          window.resolveSyncPrompt = (choice) => {
+             userSyncChoice = choice;
+             hasShownSyncPrompt = true;
+             $('#sync-prompt-modal').classList.remove('active');
+             
+             state.currentIndex = update.queue ? update.queue.findIndex(q => q.videoId === update.currentSong.videoId) : state.currentIndex;
+             state.currentSongInfo = update.currentSong;
+             updateUI(update.currentSong);
+             showBar(true);
+             try {
+               audio.src = '/api/stream/' + update.currentSong.videoId;
+               audio.load();
+               if (choice === 'sync') {
+                  audio.currentTime = update.currentTime || 0;
+                  if (update.isPlaying) audio.play().catch(()=>{});
+               } else {
+                  audio.currentTime = 0;
+                  audio.play().catch(()=>{});
+               }
+             } catch(e) {}
+             isProcessingRoomSync = false;
+          };
+          return; // Pause UI sync until prompt resolved
+        }
+        
+        hasShownSyncPrompt = true;
+
         state.currentIndex = update.queue ? update.queue.findIndex(q => q.videoId === update.currentSong.videoId) : state.currentIndex;
         state.currentSongInfo = update.currentSong;
         updateUI(update.currentSong);
@@ -952,7 +1139,7 @@
       state.queue = cur ? [cur] : [];
       state.currentIndex = cur ? 0 : -1;
       renderQueue();
-      renderRoomQueue();
+      if (roomCode) renderRoomQueue();
       saveState();
       toast('Đã xóa hàng chờ', 'info');
       emitRoomState();
@@ -1013,7 +1200,7 @@
     if (!state.queue.some(q => q.videoId === song.videoId)) {
       state.queue.push(song);
       renderQueue();
-      renderRoomQueue();
+      if (roomCode) renderRoomQueue();
       saveState();
       emitRoomState({ queue: state.queue });
     }
@@ -1066,7 +1253,7 @@
           }
         }
         renderQueue();
-        renderRoomQueue();
+        if (roomCode) renderRoomQueue();
         saveState();
         emitRoomState();
       });

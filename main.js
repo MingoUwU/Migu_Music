@@ -2,6 +2,12 @@ const { app, BrowserWindow, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const net = require('net');
 
+// ── Memory Optimization cho máy 8GB RAM ────────────────────────
+app.commandLine.appendSwitch('renderer-process-limit', '1'); // Giới hạn chỉ mở 1 process cho giao diện
+app.commandLine.appendSwitch('js-flags', '--max-old-space-size=256'); // Ép V8 Engine dọn rác sớm, không ngốn RAM
+app.commandLine.appendSwitch('disable-site-isolation-trials'); // Giảm Overhead RAM của Chromium
+// ───────────────────────────────────────────────────────────────
+
 const PORT = 3000;
 const ICON_PATH = path.join(__dirname, 'public', 'icon.png');
 
@@ -44,6 +50,8 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       autoplayPolicy: 'no-user-gesture-required',
+      backgroundThrottling: true, // Tối ưu CPU/RAM khi thu nhỏ xuống khay hệ thống
+      spellcheck: false // Tắt tính năng kiểm tra chính tả của Chromium (tiết kiệm ~20-30MB RAM)
     },
     show: false,
   });
