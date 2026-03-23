@@ -37,6 +37,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
         Dán Link
       </button>
+      <button class="nav-btn" data-view="room" id="nav-btn-room" style="color:var(--accent)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+        Nghe chung
+      </button>
     </nav>
 
     <div class="sidebar-divider"></div>
@@ -133,6 +137,87 @@
           </button>
         </div>
         <div class="paste-preview" id="paste-preview"></div>
+      </div>
+    </section>
+
+    <!-- ─── Room ─────────────────────────────── -->
+    <section class="view" id="view-room">
+      <div class="view-header">
+        <h2>🎧 Nghe chung</h2>
+        <p class="greeting-sub" id="room-sub">Mời bạn bè cùng nghe nhạc</p>
+      </div>
+
+      <div id="room-setup-panel" class="room-panel" style="display:block;">
+        <div style="background:var(--glass); border-radius:var(--r-md); padding:30px; text-align:center; max-width:500px; margin:0 auto; margin-top:50px;">
+          <svg style="width:64px;height:64px;color:var(--accent);margin-bottom:20px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+          <h3 style="margin-bottom:10px;">Tạo phòng nhạc</h3>
+          <p style="color:var(--text-secondary);margin-bottom:20px;">Tạo một phòng nhạc để nghe cùng bạn bè. Bất kỳ ai có link đều có thể thêm bài hát.</p>
+          <button class="btn-primary" id="btn-create-room" style="padding:12px 24px;">Tạo phòng ngay</button>
+          
+          <div style="margin-top:30px; border-top: 1px dashed var(--border); padding-top:20px;">
+            <p style="margin-bottom:10px;">Hoặc tham gia phòng:</p>
+            <div class="paste-input-wrap" style="margin:0 auto;">
+              <input type="text" id="room-join-input" placeholder="Mã XYZ12..." autocomplete="off" style="text-transform:uppercase;">
+              <button class="btn-primary" id="btn-join-room-code">Tham gia</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="room-active-panel" class="room-panel" style="display:none; height:calc(100vh - 180px); gap: 20px;">
+        <div class="room-left" style="flex:1; display:flex; flex-direction:column; min-width:0; gap:20px;">
+          <div class="room-info-card" style="background:var(--glass); border-radius:var(--r-md); padding:20px;">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+              <div>
+                <h3>Phòng: <span id="r-code" style="color:var(--accent);font-family:monospace;font-size:1.2em;">---</span></h3>
+                <p style="margin-top:5px; color:var(--text-secondary);">Thành viên đang On: <span id="r-users-count" style="font-weight:bold;color:white;">1</span></p>
+              </div>
+              <div style="display:flex; gap:10px;">
+                <button class="btn-text" id="btn-copy-room-link" style="border:1px solid var(--border); padding:8px 12px;"> Copy Link </button>
+                <button class="btn-text" id="btn-leave-room" style="border:1px solid rgba(255,71,87,0.5); padding:8px 12px; color:#ff4757;"> Rời phòng </button>
+              </div>
+            </div>
+            
+            <div id="host-controls" style="margin-top:15px; border-top:1px dashed var(--border); padding-top:15px; display:none;">
+              <h4 style="color:gold;">👑 Cài đặt cho Host</h4>
+              <label style="display:flex; align-items:center; gap:10px; margin-top:10px; cursor:pointer; color:var(--text-secondary); font-size:14px;">
+                <input type="checkbox" id="host-sync-mode" checked>
+                <span>Đồng bộ 100% (Người khác nghe cùng vị trí bài hát với Host)</span>
+              </label>
+            </div>
+          </div>
+
+          <div style="flex:1; background:var(--glass); border-radius:var(--r-md); display:flex; flex-direction:column; overflow:hidden;">
+            <div class="queue-header" style="border-bottom:1px solid var(--border);">
+              <h3>Hàng chờ phòng</h3>
+            </div>
+            <div class="queue-list" id="room-queue-container" style="flex:1;">
+              <div class="empty-state small"><p>Hàng chờ phòng trống. Cứ tìm bài và phát nhé!</p></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="room-right" style="width: 320px; background:var(--glass); border-radius:var(--r-md); display:flex; flex-direction:column; overflow:hidden;">
+            <div class="queue-header" style="border-bottom:1px solid var(--border);">
+              <h3>Trò chuyện</h3>
+            </div>
+            <div id="room-chat-messages" style="flex:1; padding:15px; overflow-y:auto; display:flex; flex-direction:column; gap:12px;">
+              <div style="font-size:12px; color:var(--text-secondary); text-align:center;">Chào mừng bạn đến phòng nhạc!</div>
+            </div>
+            <div style="padding:15px; border-top:1px solid var(--border);">
+              <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
+                <button class="btn-reaction" data-emoji="❤️">❤️</button>
+                <button class="btn-reaction" data-emoji="🔥">🔥</button>
+                <button class="btn-reaction" data-emoji="🎵">🎵</button>
+                <button class="btn-reaction" data-emoji="👏">👏</button>
+                <button class="btn-reaction" data-emoji="😎">😎</button>
+              </div>
+              <form id="room-chat-form" style="display:flex; gap:10px;">
+                <input type="text" id="room-chat-input" placeholder="Aa..." autocomplete="off" style="flex:1; padding:10px; border-radius:20px; border:1px solid var(--border); background:rgba(255,255,255,0.05); color:white; outline:none;">
+                <button type="submit" class="btn-primary" style="padding:0 15px; border-radius:20px;">Gửi</button>
+              </form>
+            </div>
+        </div>
       </div>
     </section>
 
@@ -335,6 +420,7 @@
 <!-- Audio Element -->
 <audio id="audio-player" preload="auto"></audio>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="js/app.js"></script>
 </body>
 </html>
