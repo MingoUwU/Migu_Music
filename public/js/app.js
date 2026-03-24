@@ -107,6 +107,9 @@
     const p = $('#greeting-sub');
     if (h2) h2.textContent = text;
     if (p) p.textContent = sub;
+    if (window.electronAPI && window.electronAPI.onUpdateMsg) {
+      window.electronAPI.onUpdateMsg((msg) => toast(msg, 'info'));
+    }
   }
 
   // ── Init ──────────────────────────────────────────────────────

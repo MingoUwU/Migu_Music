@@ -190,8 +190,11 @@ app.whenReady().then(async () => {
 });
 
 // Auto-update event handlers
-autoUpdater.on('update-available', () => {
+autoUpdater.on('update-available', (info) => {
   console.log('[Updater] Update available.');
+  if (mainWindow) {
+    mainWindow.webContents.send('update-msg', `Có bản cập nhật mới (v${info.version}). Đang tự động tải về...`);
+  }
 });
 
 autoUpdater.on('update-not-available', () => {
@@ -204,8 +207,7 @@ autoUpdater.on('error', (err) => {
 
 autoUpdater.on('download-progress', (progressObj) => {
   let log_message = "Download speed: " + progressObj.bytesPerSecond;
-  log_message = log_message + ' - Downloaded ' + progressObj.percent + '%';
-  log_message = log_message + ' (' + progressObj.transferred + "/" + progressObj.total + ')';
+  log_message = log_message + ' - Downloaded ' + Math.round(progressObj.percent) + '%';
   console.log('[Updater] ' + log_message);
 });
 
