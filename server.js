@@ -5,9 +5,24 @@ const { execSync, spawn } = require('child_process');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
+const rateLimit = require('express-rate-limit');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// ── In-Memory Cache ───────────────────────────────────────────
+const memoryCache = new Map();
+const CACHE_TTL = 3 * 60 * 60; // 3 hours (in seconds)
+
+// ── Rate Limiting ─────────────────────────────────────────────
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later.' }
+});
+app.use('/api/', limiter);
 
 // ── Logging Setup ─────────────────────────────────────────────
 const logDir = path.join(os.tmpdir(), 'MiGuMusic');
@@ -195,21 +210,24 @@ async function youtubeSuggestions(query) {
 }
 
 // ── Cache for stream URLs ────────────────────────────────────────
-const streamCache = new Map();
-const CACHE_TTL = 3 * 60 * 60 * 1000; // 3 hours
-
-function getCachedUrl(videoId) {
-  const cached = streamCache.get(videoId);
-  if (cached && Date.now() - cached.time < CACHE_TTL) {
-    return cached;
-  }
-  streamCache.delete(videoId);
+async function getCachedUrl(videoId) {
+  try {
+    const cached = memoryCache.get(videoId);
+    if (cached && Date.now() - cached.time < CACHE_TTL * 1000) return cached;
+    if (cached) memoryCache.delete(videoId);
+  } catch (e) { log('Cache Get Error: ' + e.message, 'ERROR'); }
   return null;
+}
+
+async function setCachedUrl(videoId, data) {
+  try {
+    memoryCache.set(videoId, { ...data, time: Date.now() });
+  } catch (e) { log('Cache Set Error: ' + e.message, 'ERROR'); }
 }
 
 // ── Get audio URL via yt-dlp ─────────────────────────────────────
 async function getAudioUrl(videoId) {
-  const cached = getCachedUrl(videoId);
+  const cached = await getCachedUrl(videoId);
   if (cached) return cached;
 
   let targetUrl = videoId;
@@ -248,7 +266,7 @@ async function getAudioUrl(videoId) {
     time: Date.now()
   };
 
-  streamCache.set(videoId, result);
+  await setCachedUrl(videoId, result);
   return result;
 }
 
@@ -290,7 +308,7 @@ async function getVideoInfo(videoId) {
     viewCount: info.view_count || 0,
     time: Date.now()
   };
-  streamCache.set(videoId, cacheEntry);
+  await setCachedUrl(videoId, cacheEntry);
 
   return {
     videoId: videoId,

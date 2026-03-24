@@ -40,9 +40,6 @@
   let userSyncChoice = null;
   let hasShownSyncPrompt = false;
 
-  window.hasValidatedPw = false;
-  window.pwListenerAdded = false;
-
   // Personal state backup when in room
   let personalBackup = null;
 
@@ -215,9 +212,8 @@
 
       const name = $('#room-create-name')?.value.trim() || 'Phòng ' + code;
       const tags = $('#room-create-tags')?.value.trim() || '';
-      const password = $('#room-create-password')?.value.trim() || '';
 
-      window.currentRoomMetadata = { name, tags, password };
+      window.currentRoomMetadata = { name, tags };
       hasShownSyncPrompt = true; // Creator doesn't need prompt
 
       joinRoomByCode(code, true);
@@ -347,20 +343,7 @@
       renderLobbyRooms();
     });
 
-    // Reset password state when switching views
     $('#nav-btn-room')?.addEventListener('click', () => {
-       window.hasValidatedPw = false;
-       window.pwListenerAdded = false;
-       const wrap = $('#join-password-wrap');
-       if (wrap) wrap.style.display = 'none';
-       const joinBtn = $('#btn-join-room-code');
-       if (joinBtn) {
-         joinBtn.textContent = 'Tiếp tục';
-         joinBtn.onclick = () => {
-            const code = $('#room-join-input').value.trim();
-            if (code) joinRoomByCode(code);
-         };
-       }
     });
   }
 
@@ -384,7 +367,7 @@
     container.innerHTML = filtered.map(r => `
       <div class="lobby-room-item" style="background: var(--surface); padding: 12px; border-radius: 8px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; border: 1px solid var(--border); transition: all 0.2s;" onclick="joinRoomFromLobby('${r.roomId}')" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
         <div>
-          <div style="font-weight: 600; font-size: 15px;">${r.hasPw ? '🔒 ' : ''}${esc(r.name)}</div>
+          <div style="font-weight: 600; font-size: 15px;">${esc(r.name)}</div>
           <div style="font-size: 12px; color: var(--accent); margin-top: 6px;"><i class="fas fa-tag"></i> ${esc(r.tags) || 'Không có tag'}</div>
         </div>
         <div style="font-size: 13px; opacity: 0.8; text-align: right;">
@@ -411,6 +394,7 @@
   }
 
   async function joinRoomByCode(code, isCreating = false, metadata = null) {
+    if (metadata) window.currentRoomMetadata = metadata;
     if (roomChannel) {
       await supabase.removeChannel(roomChannel);
     }
@@ -424,10 +408,6 @@
       };
     }
 
-    window.hasValidatedPw = false;
-    window.pwListenerAdded = false;
-    const wrap = $('#join-password-wrap');
-    if (wrap) wrap.style.display = 'none';
 
     // If creating a room, start fresh
     if (isCreating) {
@@ -471,38 +451,6 @@
         const el = $('#r-users-count');
         if (el) el.textContent = users.length;
 
-        // Check password if I am a guest and haven't validated yet
-        if (!isRoomHost && !window.hasValidatedPw) {
-          const hostEntry = Object.values(presence).find(p => p[0]?.password !== undefined)?.[0];
-          if (hostEntry && hostEntry.password) {
-            const wrap = $('#join-password-wrap');
-            if (wrap) wrap.style.display = 'block';
-            
-            const joinBtn = $('#btn-join-room-code');
-            const pwInput = $('#room-join-password');
-            
-            if (!window.pwListenerAdded) {
-               joinBtn.textContent = 'Vào phòng';
-               const tryJoin = () => {
-                 if (pwInput.value === hostEntry.password) {
-                   window.hasValidatedPw = true;
-                   wrap.style.display = 'none';
-                   joinBtn.textContent = 'Tiếp tục';
-                   toast('Mật khẩu chính xác!', 'success');
-                 } else {
-                   toast('Sai mật khẩu phòng!', 'error');
-                 }
-               };
-               joinBtn.onclick = tryJoin;
-               pwInput.onkeydown = (e) => { if(e.key === 'Enter') tryJoin(); };
-               window.pwListenerAdded = true;
-            }
-            return; // Don't proceed with full join until validated
-          } else {
-            window.hasValidatedPw = true;
-            window.targetSyncTime = null;
-          }
-        }
 
         // Host Election: earliest joined_at
         let hostId = null;
@@ -527,14 +475,18 @@
             toast('Bạn đã trở thành Host', 'info');
             window.currentRoomMetadata = { name: 'Phòng ' + roomCode, tags: '' };
           }
+          const meta = window.currentRoomMetadata || {};
+          // Track joined_at for host election
+          roomChannel.track({
+            joined_at: earliest
+          }).catch(() => {});
+
           if (globalLobbyChannel) {
             globalLobbyChannel.track({
               roomId: roomCode,
-              name: window.currentRoomMetadata?.name || 'Phòng ' + roomCode,
-              tags: window.currentRoomMetadata?.tags || '',
+              name: meta.name || 'Phòng ' + roomCode,
+              tags: meta.tags || '',
               usersCount: users.length,
-              hasPw: !!window.currentRoomMetadata?.password,
-              password: window.currentRoomMetadata?.password
             }).catch(() => { });
           }
         } else {
@@ -573,8 +525,7 @@
 
           const metadata = window.currentRoomMetadata || {};
           await roomChannel.track({
-            joined_at: Date.now(),
-            password: isRoomHost ? metadata.password : undefined
+            joined_at: Date.now()
           });
         }
       });
