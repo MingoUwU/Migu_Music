@@ -1100,6 +1100,13 @@
 
   // ── Player Core ───────────────────────────────────────────────
   async function playSong(song, addQ = true) {
+    if (roomCode && !isRoomHost) {
+      console.log('[Room] Guest requested track, adding to Shared Queue instead of playing local.');
+      addToQueue(song);
+      toast('Đã thêm bài hát vào hàng chờ phòng', 'success');
+      return;
+    }
+
     if (addQ) {
       const idx = state.queue.findIndex(q => q.videoId === song.videoId);
       if (idx >= 0) state.currentIndex = idx;
