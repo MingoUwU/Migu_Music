@@ -40,6 +40,9 @@
   let userSyncChoice = null;
   let hasShownSyncPrompt = false;
 
+  window.hasValidatedPw = false;
+  window.pwListenerAdded = false;
+
   // Personal state backup when in room
   let personalBackup = null;
 
@@ -87,16 +90,16 @@
     let sub = 'Bắt đầu ngày mới với âm nhạc';
 
     if (hour >= 5 && hour < 11) {
-      text = 'Chào buổi sáng! ☕️';
+      text = 'Chào buổi sáng! ';
       sub = 'Bắt đầu ngày mới tràn đầy năng lượng';
     } else if (hour >= 11 && hour < 14) {
-      text = 'Chào buổi trưa! 🍲';
+      text = 'Chào buổi trưa! ';
       sub = 'Thư giãn một chút với âm nhạc nhé';
     } else if (hour >= 14 && hour < 18) {
-      text = 'Chào buổi chiều! 🍵';
+      text = 'Chào buổi chiều! ';
       sub = 'Tiếp thêm cảm hứng cho buổi chiều';
     } else {
-      text = 'Chào buổi tối! 🌙';
+      text = 'Chào buổi tối! ';
       sub = 'Thả lỏng cơ thể cùng những giai điệu yêu thích';
     }
 
@@ -209,8 +212,9 @@
 
       const name = $('#room-create-name')?.value.trim() || 'Phòng ' + code;
       const tags = $('#room-create-tags')?.value.trim() || '';
+      const password = $('#room-create-password')?.value.trim() || '';
 
-      window.currentRoomMetadata = { name, tags };
+      window.currentRoomMetadata = { name, tags, password };
       hasShownSyncPrompt = true; // Creator doesn't need prompt
 
       joinRoomByCode(code, true);
@@ -339,6 +343,22 @@
     $('#lobby-search-input')?.addEventListener('input', () => {
       renderLobbyRooms();
     });
+
+    // Reset password state when switching views
+    $('#nav-btn-room')?.addEventListener('click', () => {
+       window.hasValidatedPw = false;
+       window.pwListenerAdded = false;
+       const wrap = $('#join-password-wrap');
+       if (wrap) wrap.style.display = 'none';
+       const joinBtn = $('#btn-join-room-code');
+       if (joinBtn) {
+         joinBtn.textContent = 'Tiếp tục';
+         joinBtn.onclick = () => {
+            const code = $('#room-join-input').value.trim();
+            if (code) joinRoomByCode(code);
+         };
+       }
+    });
   }
 
   function renderLobbyRooms() {
@@ -361,7 +381,7 @@
     container.innerHTML = filtered.map(r => `
       <div class="lobby-room-item" style="background: var(--surface); padding: 12px; border-radius: 8px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; border: 1px solid var(--border); transition: all 0.2s;" onclick="joinRoomFromLobby('${r.roomId}')" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
         <div>
-          <div style="font-weight: 600; font-size: 15px;">${esc(r.name)}</div>
+          <div style="font-weight: 600; font-size: 15px;">${r.hasPw ? '🔒 ' : ''}${esc(r.name)}</div>
           <div style="font-size: 12px; color: var(--accent); margin-top: 6px;"><i class="fas fa-tag"></i> ${esc(r.tags) || 'Không có tag'}</div>
         </div>
         <div style="font-size: 13px; opacity: 0.8; text-align: right;">
@@ -401,6 +421,11 @@
       };
     }
 
+    window.hasValidatedPw = false;
+    window.pwListenerAdded = false;
+    const wrap = $('#join-password-wrap');
+    if (wrap) wrap.style.display = 'none';
+
     // If creating a room, start fresh
     if (isCreating) {
       state.queue = [];
@@ -429,15 +454,56 @@
 
     roomChannel
       .on('presence', { event: 'sync' }, () => {
-        const state = roomChannel.presenceState();
-        const users = Object.keys(state);
+        const presence = roomChannel.presenceState();
+        const users = Object.keys(presence);
+        
+        // Handle join/leave notifications via user count change
+        const lastCount = parseInt($('#r-users-count')?.textContent || '0');
+        if (users.length > lastCount && lastCount > 0) {
+          toast('Một người vừa tham gia phòng 🎧', 'info');
+        } else if (users.length < lastCount) {
+          toast('Một người đã rời phòng', 'info');
+        }
+
         const el = $('#r-users-count');
         if (el) el.textContent = users.length;
+
+        // Check password if I am a guest and haven't validated yet
+        if (!isRoomHost && !window.hasValidatedPw) {
+          const hostEntry = Object.values(presence).find(p => p[0]?.password !== undefined)?.[0];
+          if (hostEntry && hostEntry.password) {
+            const wrap = $('#join-password-wrap');
+            if (wrap) wrap.style.display = 'block';
+            
+            const joinBtn = $('#btn-join-room-code');
+            const pwInput = $('#room-join-password');
+            
+            if (!window.pwListenerAdded) {
+               joinBtn.textContent = 'Vào phòng';
+               const tryJoin = () => {
+                 if (pwInput.value === hostEntry.password) {
+                   window.hasValidatedPw = true;
+                   wrap.style.display = 'none';
+                   joinBtn.textContent = 'Tiếp tục';
+                   toast('Mật khẩu chính xác!', 'success');
+                 } else {
+                   toast('Sai mật khẩu phòng!', 'error');
+                 }
+               };
+               joinBtn.onclick = tryJoin;
+               pwInput.onkeydown = (e) => { if(e.key === 'Enter') tryJoin(); };
+               window.pwListenerAdded = true;
+            }
+            return; // Don't proceed with full join until validated
+          } else {
+            window.hasValidatedPw = true;
+          }
+        }
 
         // Host Election: earliest joined_at
         let hostId = null;
         let earliest = Infinity;
-        for (const [key, presences] of Object.entries(state)) {
+        for (const [key, presences] of Object.entries(presence)) {
           if (presences[0] && presences[0].joined_at < earliest) {
             earliest = presences[0].joined_at;
             hostId = key;
@@ -461,7 +527,9 @@
               roomId: roomCode,
               name: window.currentRoomMetadata?.name || 'Phòng ' + roomCode,
               tags: window.currentRoomMetadata?.tags || '',
-              usersCount: users.length
+              usersCount: users.length,
+              hasPw: !!window.currentRoomMetadata?.password,
+              password: window.currentRoomMetadata?.password
             }).catch(() => { });
           }
         } else {
@@ -472,8 +540,7 @@
       })
       .on('presence', { event: 'join' }, ({ key, newPresences }) => {
         if (key !== myUserId) {
-          toast('Một người vừa tham gia', 'info');
-          // If I am host, broadcast the current real-state to the newly joined user
+          // toast('Một người vừa tham gia', 'info'); // Handled by sync event now
           if (isRoomHost) emitRoomState({}, true);
         }
       })
@@ -485,20 +552,25 @@
       })
       .on('broadcast', { event: 'chat' }, ({ payload }) => {
         addChatMessage(payload.text, false);
+        toast(`Tin nhắn mới: ${payload.text}`, 'info');
       })
       .on('broadcast', { event: 'reaction' }, ({ payload }) => {
         showReaction(payload.emoji, false);
       })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
-          await roomChannel.track({ joined_at: Date.now() });
-
           $('#room-setup-panel').style.display = 'none';
           $('#room-active-panel').style.display = 'flex';
           $('#r-code').textContent = roomCode;
           history.pushState({}, '', window.location.pathname + '?room=' + roomCode);
           toast('Đã tham gia phòng', 'success');
           isProcessingRoomSync = false;
+
+          const metadata = window.currentRoomMetadata || {};
+          await roomChannel.track({
+            joined_at: Date.now(),
+            password: isRoomHost ? metadata.password : undefined
+          });
         }
       });
   }
@@ -508,6 +580,10 @@
     isProcessingRoomSync = true;
 
     if (update.queue !== undefined) {
+      if (update.queue.length > state.queue.length && state.queue.length > 0) {
+        const newSong = update.queue[update.queue.length - 1];
+        if (newSong) toast(`Bài mới được thêm: ${newSong.title}`, 'success');
+      }
       state.queue = update.queue;
       renderQueue();
       renderRoomQueue();
@@ -1124,7 +1200,7 @@
       // Increase saturation/brightness for accent
       const accent = `rgba(${r}, ${g}, ${b}, 0.45)`;
       const bg = `rgba(${Math.max(0, r - 40)}, ${Math.max(0, g - 40)}, ${Math.max(0, b - 40)}, 0.35)`;
-      
+
       console.log('[MiGu] Dynamic colors:', accent, bg);
       document.documentElement.style.setProperty('--dynamic-accent', accent);
       document.documentElement.style.setProperty('--dynamic-bg', bg);
@@ -1182,7 +1258,7 @@
     if (!canvas) return;
 
     const ctx = canvas.getContext('2d');
-    
+
     const initCtx = () => {
       if (audioCtx) return;
       console.log('[MiGu] Initializing Web Audio Context...');
@@ -1192,7 +1268,7 @@
       source.connect(analyser);
       analyser.connect(audioCtx.destination);
       analyser.fftSize = 128;
-      
+
       if (state.visualizerMode === '3d') initGalaxy();
       drawVisualizer();
       window.removeEventListener('click', initCtx);
@@ -1204,11 +1280,11 @@
 
     // Mouse movement for galaxy tilt
     window.addEventListener('mousemove', (e) => {
-        const rect = $('#view-nowplaying')?.getBoundingClientRect();
-        if (rect) {
-            mouseX = (e.clientX - (rect.left + rect.width / 2)) / (rect.width / 2);
-            mouseY = (e.clientY - (rect.top + rect.height / 2)) / (rect.height / 2);
-        }
+      const rect = $('#view-nowplaying')?.getBoundingClientRect();
+      if (rect) {
+        mouseX = (e.clientX - (rect.left + rect.width / 2)) / (rect.width / 2);
+        mouseY = (e.clientY - (rect.top + rect.height / 2)) / (rect.height / 2);
+      }
     });
 
     $('#np-btn-menu')?.addEventListener('click', () => toggleVisualizerMode());
@@ -1305,29 +1381,29 @@
     const armTightness = 0.5;
 
     for (let i = 0; i < starCount; i++) {
-        const i3 = i * 3;
-        const radius = Math.random() * 5;
-        const spinAngle = radius * armTightness;
-        const branchAngle = (i % spiralArms) / spiralArms * Math.PI * 2;
+      const i3 = i * 3;
+      const radius = Math.random() * 5;
+      const spinAngle = radius * armTightness;
+      const branchAngle = (i % spiralArms) / spiralArms * Math.PI * 2;
 
-        const randomX = (Math.pow(Math.random(), 3) * (Math.random() < 0.5 ? 1 : -1) * 0.3) * radius;
-        const randomY = (Math.pow(Math.random(), 3) * (Math.random() < 0.5 ? 1 : -1) * 0.3) * radius;
-        const randomZ = (Math.pow(Math.random(), 3) * (Math.random() < 0.5 ? 1 : -1) * 0.3) * radius;
+      const randomX = (Math.pow(Math.random(), 3) * (Math.random() < 0.5 ? 1 : -1) * 0.3) * radius;
+      const randomY = (Math.pow(Math.random(), 3) * (Math.random() < 0.5 ? 1 : -1) * 0.3) * radius;
+      const randomZ = (Math.pow(Math.random(), 3) * (Math.random() < 0.5 ? 1 : -1) * 0.3) * radius;
 
-        positions[i3] = Math.cos(branchAngle + spinAngle) * radius + randomX;
-        positions[i3 + 1] = randomY * 0.5; 
-        positions[i3 + 2] = Math.sin(branchAngle + spinAngle) * radius + randomZ;
+      positions[i3] = Math.cos(branchAngle + spinAngle) * radius + randomX;
+      positions[i3 + 1] = randomY * 0.5;
+      positions[i3 + 2] = Math.sin(branchAngle + spinAngle) * radius + randomZ;
 
-        const mixedColor = new THREE.Color();
-        const colorInside = new THREE.Color('#ff0099'); 
-        const colorOutside = new THREE.Color('#00ccff');
-        mixedColor.lerpColors(colorInside, colorOutside, radius / 5);
+      const mixedColor = new THREE.Color();
+      const colorInside = new THREE.Color('#ff0099');
+      const colorOutside = new THREE.Color('#00ccff');
+      mixedColor.lerpColors(colorInside, colorOutside, radius / 5);
 
-        colors[i3] = mixedColor.r;
-        colors[i3 + 1] = mixedColor.g;
-        colors[i3 + 2] = mixedColor.b;
+      colors[i3] = mixedColor.r;
+      colors[i3 + 1] = mixedColor.g;
+      colors[i3 + 2] = mixedColor.b;
 
-        scales[i] = Math.random();
+      scales[i] = Math.random();
     }
 
     gGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -1351,27 +1427,27 @@
     const coreGeom = new THREE.BufferGeometry();
     coreGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array([0, 0, 0]), 3));
     const coreMat = new THREE.PointsMaterial({
-        size: 3.5, // Even bigger
-        map: texture,
-        transparent: true,
-        blending: THREE.AdditiveBlending,
-        color: 0xffffff,
-        depthWrite: false,
-        opacity: 1
+      size: 3.5, // Even bigger
+      map: texture,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      color: 0xffffff,
+      depthWrite: false,
+      opacity: 1
     });
     gCore = new THREE.Points(coreGeom, coreMat);
     gScene.add(gCore);
 
     // Robust Resize handling using ResizeObserver
     const ro = new ResizeObserver(() => {
-        const w = container.offsetWidth || 500;
-        const h = container.offsetHeight || 500;
-        if (w > 0 && h > 0) {
-            gRenderer.setSize(w, h);
-            gCamera.aspect = w / h;
-            gCamera.updateProjectionMatrix();
-            console.log('[MiGu] 3D Visualizer Adaptive Resize:', w, 'x', h);
-        }
+      const w = container.offsetWidth || 500;
+      const h = container.offsetHeight || 500;
+      if (w > 0 && h > 0) {
+        gRenderer.setSize(w, h);
+        gCamera.aspect = w / h;
+        gCamera.updateProjectionMatrix();
+        console.log('[MiGu] 3D Visualizer Adaptive Resize:', w, 'x', h);
+      }
     });
     ro.observe(container);
   }
@@ -1391,34 +1467,34 @@
 
     const lerpPulse = (average / 255);
     const targetScale = (1 + lerpPulse * 0.8) + pulseIntensity * 0.6;
-    
+
     gParticles.scale.set(
-        THREE.MathUtils.lerp(gParticles.scale.x, targetScale, 0.1),
-        THREE.MathUtils.lerp(gParticles.scale.y, targetScale, 0.1),
-        THREE.MathUtils.lerp(gParticles.scale.z, targetScale, 0.1)
+      THREE.MathUtils.lerp(gParticles.scale.x, targetScale, 0.1),
+      THREE.MathUtils.lerp(gParticles.scale.y, targetScale, 0.1),
+      THREE.MathUtils.lerp(gParticles.scale.z, targetScale, 0.1)
     );
 
     // Dynamic Core Pulse & Color
     if (gCore) {
-        gCore.material.size = 3.5 + pulseIntensity * 5; // Surge more!
-        gCore.material.opacity = 1; 
-        
-        // Lerp color between Pink and Cyan
-        const c1 = new THREE.Color('#ff0099');
-        const c2 = new THREE.Color('#00ccff');
-        gCore.material.color.lerpColors(c1, c2, 0.5 + (Math.sin(Date.now() * 0.002) * 0.5));
-        
-        // More dramatic flash
-        if (pulseIntensity > 0.7) gCore.material.color.set('#ffffff');
+      gCore.material.size = 3.5 + pulseIntensity * 5; // Surge more!
+      gCore.material.opacity = 1;
+
+      // Lerp color between Pink and Cyan
+      const c1 = new THREE.Color('#ff0099');
+      const c2 = new THREE.Color('#00ccff');
+      gCore.material.color.lerpColors(c1, c2, 0.5 + (Math.sin(Date.now() * 0.002) * 0.5));
+
+      // More dramatic flash
+      if (pulseIntensity > 0.7) gCore.material.color.set('#ffffff');
     }
 
     // Interaction & Rotation
     gParticles.rotation.y += 0.003 + lerpPulse * 0.02 + pulseIntensity * 0.05;
-    
+
     // Mouse Gravity Tilt
     const targetRotX = 0.5 + lerpPulse * 0.3 + (mouseY * 0.4);
     const targetRotY = (mouseX * 0.4);
-    
+
     gParticles.rotation.x = THREE.MathUtils.lerp(gParticles.rotation.x, targetRotX, 0.05);
     gParticles.rotation.z = THREE.MathUtils.lerp(gParticles.rotation.z, targetRotY, 0.05);
 
@@ -1438,25 +1514,25 @@
         container.style.opacity = '0';
         container.style.transform = 'scale(0.8)';
       }
-      setTimeout(() => { 
-        if (disc) disc.style.display = 'none'; 
-        galaxy.style.display = 'block'; 
+      setTimeout(() => {
+        if (disc) disc.style.display = 'none';
+        galaxy.style.display = 'block';
         if (!gRenderer) initGalaxy();
         else {
-            const w = galaxy.offsetWidth || 500;
-            const h = galaxy.offsetHeight || 500;
-            gRenderer.setSize(w, h);
-            gCamera.aspect = w / h;
-            gCamera.updateProjectionMatrix();
+          const w = galaxy.offsetWidth || 500;
+          const h = galaxy.offsetHeight || 500;
+          gRenderer.setSize(w, h);
+          gCamera.aspect = w / h;
+          gCamera.updateProjectionMatrix();
         }
       }, 500);
     } else {
       galaxy.style.display = 'none';
       if (disc) disc.style.display = 'flex';
-      setTimeout(() => { 
+      setTimeout(() => {
         if (container) {
-          container.style.opacity = '1'; 
-          container.style.transform = 'scale(1)'; 
+          container.style.opacity = '1';
+          container.style.transform = 'scale(1)';
         }
       }, 50);
     }
