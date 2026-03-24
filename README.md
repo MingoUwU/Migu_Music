@@ -1,37 +1,88 @@
-# MiGu Music Player 🎵
+# <p align="center">🎵 MiGu Music Player</p>
 
-MiGu Music is a personal, ad-free music streaming desktop application with a beautiful "iOS 26 Liquid Glass" glassmorphism aesthetic. It fetches audio streams directly off YouTube and provides a seamless music listening experience with an ultra-premium UI.
+<p align="center">
+  <img src="public/banner.png" alt="MiGu Music Mockup" width="800">
+</p>
 
-## Features
-- **Trải nghiệm Premium**: Giao diện trong suốt viền mờ cực đẹp mắt, dark mode hiện đại.
-- **Dán Link & Play**: Copy link nhạc trên YouTube và dán vào app để phát luôn không cần tải.
-- **Tìm kiếm Online**: Công cụ tìm kiếm YouTube tích hợp với Gợi ý tìm kiếm (Autocomplete).
-- **Trình phát xịn xò**: Đĩa than xoay tròn khi hát nhạc, tự động phát danh sách gợi ý.
-- **Quản lý Thư viện**: Thêm bài hát vào Yêu thích (Favorites) và tạo Playlist cá nhân thoải mái.
-- **Hoạt động ngầm**: Thu nhỏ app xuống system tray (góc dưới màn hình Windows) để vừa làm việc vừa nghe nhạc.
-- **Chất lượng cao**: Tự ưu tiên stream audio bitrate cao nhất (Opus 160kbps).
-- **Thịnh hành**: Tự động lấy danh sách Top nhạc Trending tại Việt Nam mỗi ngày.
+<p align="center">
+  <strong>Personal, Ad-Free, Ultra-Premium Music Streaming Experience</strong>
+</p>
 
-## Setup & Installation (Cài đặt Source Code)
+---
 
-Nếu bạn muốn tải mã nguồn về để vọc vạch:
+MiGu Music is a sophisticated desktop music application designed with a futuristic **"iOS 26 Liquid Glass"** glassmorphism aesthetic. It provides a seamless, high-quality music listening experience by streaming directly from YouTube, all within a beautiful, ultra-premium interface.
 
-1. **Yêu cầu máy tính cài đặt sẵn [Node.js](https://nodejs.org/)**
-2. Mở thư mục code và chạy lệnh cài đặt thư viện:
-   ```bash
-   npm install
-   ```
-3. Chạy app ở chế độ phát triển (Development):
-   ```bash
-   npm start
-   ```
+## ✨ Key Features
 
-## Build file EXE (Đóng gói cho máy khác cấu hình)
-Nếu muốn đóng gói app lại dạng file cài đặt `.exe` để chia sẻ cho mọi người:
-```bash
-npm run build
-```
-Kết quả sẽ sinh ra file `MiGu Music Setup 2.0.0.exe` trong thư mục `dist/`.
+- 💎 **Premium UI**: Stunning "Liquid Glass" transparency with modern dark mode and smooth animations.
+- 🤝 **Collaborative Rooms**: Create or join "Listen Together" rooms with real-time sync, chat, and reactions.
+- 🔗 **Paste & Play**: Instantly play any YouTube link without the need for downloads.
+- 🔍 **Integrated Search**: Built-in YouTube search engine with smart autocomplete suggestions.
+- 💿 **Professional Player**: Iconic rotating vinyl disc visualizer and automatic smart song recommendations.
+- 📂 **Library Management**: Curate your favorites and create custom playlists with ease.
+- 📥 **System Tray Support**: Run the app in the background (Windows system tray) for uninterrupted listening.
+- 🎧 **High-Fidelity Audio**: Automatically prioritizes the highest available audio bitrates (Opus 160kbps).
+- 🔥 **Trending Hits**: Stay updated with daily trending music charts from Vietnam and globally.
+- 🎮 **Discord RPC**: Show off what you're listening to with integrated Discord Rich Presence.
+- 🚀 **Auto-Updates**: Never miss a feature with seamless background updates.
 
-## License
-MIT License.
+## 🤝 Collaborative Rooms (Listen Together)
+
+MiGu Music features a powerful real-time collaboration engine powered by **Supabase**:
+
+- **Synchronized Playback**: The Host's playback state (song, time, play/pause) is synced to all guests.
+- **Interactive Lobby**: Browse and join public rooms or create private ones with password protection.
+- **Social Interaction**: Built-in chat system and floating emoji reactions to share the vibe.
+- **Host Permissions**: Dynamic host election and optional enforced sync modes for a managed experience.
+
+## 🛠 Tech Stack
+
+MiGu Music is built with modern web and desktop technologies:
+
+- **Frontend**: HTML5, Vanilla CSS (Glassmorphism), JavaScript (ES6+).
+- **Backend**: [Electron](https://www.electronjs.org/), [Express.js](https://expressjs.com/).
+- **Real-time**: [Supabase](https://supabase.com/) for collaborative rooms and presence.
+- **Engine**: [yt-dlp](https://github.com/yt-dlp/yt-dlp) for robust audio stream extraction.
+- **RPC**: [discord-rpc](https://github.com/discordjs/RPC) for activity status.
+- **Updater**: [electron-updater](https://www.electron.build/auto-update) for seamless distribution.
+
+## ⚡ Performance Optimization
+
+Specially tuned for efficiency on systems with 8GB RAM:
+- Single-process renderer limit.
+- Aggressive V8 garbage collection (`max-old-space-size=256`).
+- Minimized Chromium overhead via site-isolation trials.
+- Spellcheck and devtools optimizations to save ~30MB+ RAM.
+
+## 📥 Getting Started
+
+### For Users
+Most users should download the latest installer from the [Releases](https://github.com/MingoUwU/Migu_Music/releases) page.
+
+### For Developers
+If you wish to contribute or explore the source code:
+
+1.  **Prerequisites**: Ensure you have [Node.js](https://nodejs.org/) installed.
+2.  **Install Dependencies**:
+    ```bash
+    npm install
+    ```
+3.  **Run in Development**:
+    ```bash
+    npm start
+    ```
+4.  **Build Executable**:
+    ```bash
+    npm run build
+    ```
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+<p align="center">
+  Made with ❤️ by <strong>TrungNam</strong>
+</p>
+
