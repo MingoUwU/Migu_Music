@@ -1,4 +1,5 @@
-const { app, BrowserWindow, Tray, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, Tray, Menu, nativeImage, dialog } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const net = require('net');
 const { ipcMain } = require('electron');
@@ -176,6 +177,51 @@ app.whenReady().then(async () => {
   await startServer();
   createWindow();
   createTray();
+  
+  // ── Auto Update ──────────────────────────────────────────────
+  // Check for updates every 1 hour
+  setInterval(() => {
+    autoUpdater.checkForUpdatesAndNotify();
+  }, 60 * 60 * 1000);
+
+  // Initial check
+  autoUpdater.checkForUpdatesAndNotify();
+});
+
+// Auto-update event handlers
+autoUpdater.on('update-available', () => {
+  console.log('[Updater] Update available.');
+});
+
+autoUpdater.on('update-not-available', () => {
+  console.log('[Updater] Update not available.');
+});
+
+autoUpdater.on('error', (err) => {
+  console.error('[Updater] Error in auto-updater:', err);
+});
+
+autoUpdater.on('download-progress', (progressObj) => {
+  let log_message = "Download speed: " + progressObj.bytesPerSecond;
+  log_message = log_message + ' - Downloaded ' + progressObj.percent + '%';
+  log_message = log_message + ' (' + progressObj.transferred + "/" + progressObj.total + ')';
+  console.log('[Updater] ' + log_message);
+});
+
+autoUpdater.on('update-downloaded', (info) => {
+  console.log('[Updater] Update downloaded');
+  dialog.showMessageBox({
+    type: 'info',
+    title: 'Cập nhật sẵn sàng',
+    message: `Phiên bản mới (${info.version}) đã được tải về. Bạn có muốn khởi động lại để cập nhật ngay không?`,
+    buttons: ['Cập nhật ngay', 'Để sau'],
+    defaultId: 0,
+    cancelId: 1
+  }).then((result) => {
+    if (result.response === 0) {
+      autoUpdater.quitAndInstall();
+    }
+  });
 });
 
 app.on('window-all-closed', () => {

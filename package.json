@@ -1,8 +1,13 @@
 {
   "name": "migu-music",
   "version": "2.0.0",
+  "author": "TrungNam",
   "description": "MiGu Music Player - Personal YouTube music streaming app",
   "main": "main.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MingoUwU/Migu_Music.git"
+  },
   "scripts": {
     "start": "electron .",
     "dev": "electron .",
@@ -13,6 +18,7 @@
   "build": {
     "appId": "com.migu.music",
     "productName": "MiGu Music",
+    "copyright": "Copyright © 2024 MingoUwU",
     "directories": {
       "output": "dist"
     },
@@ -23,7 +29,8 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true
+      "createDesktopShortcut": true,
+      "shortcutName": "MiGu Music"
     },
     "asarUnpack": [
       "node_modules/youtube-dl-exec/**/*"
@@ -41,11 +48,19 @@
         "from": "node_modules/youtube-dl-exec/bin",
         "to": "bin"
       }
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "MingoUwU",
+        "repo": "Migu_Music"
+      }
     ]
   },
   "dependencies": {
     "cors": "^2.8.5",
     "discord-rpc": "^4.0.1",
+    "electron-updater": "^6.8.3",
     "express": "^4.21.0",
     "node-fetch": "^2.7.0",
     "youtube-dl-exec": "^3.0.12"
