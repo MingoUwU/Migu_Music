@@ -26,6 +26,7 @@
   let roomCode = null;
   let isRoomHost = false;
   let isProcessingRoomSync = false;
+  let syncHeartbeat = null;
 
   const SUPABASE_URL = 'https://jhuqonoldshtxsquurho.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_ANl0zKdVePo8bAE_B8qKWA_bZOV5BvL';
@@ -252,6 +253,7 @@
         }
         personalBackup = null;
       }
+      if (syncHeartbeat) { clearInterval(syncHeartbeat); syncHeartbeat = null; }
       $('#room-setup-panel').style.display = 'block';
       $('#room-active-panel').style.display = 'none';
       applyHostPermissions();
@@ -414,6 +416,13 @@
     roomCode = code.toUpperCase();
     isProcessingRoomSync = true;
 
+    if (syncHeartbeat) clearInterval(syncHeartbeat);
+    syncHeartbeat = setInterval(() => {
+      if (isRoomHost && roomChannel && roomCode) {
+        emitRoomState();
+      }
+    }, 3000);
+
     roomChannel = supabase.channel(`room:${roomCode}`, {
       config: { presence: { key: myUserId } }
     });
@@ -533,14 +542,20 @@
 
     if (isSync) {
       if (update.isPlaying !== undefined) {
-        if (update.isPlaying && audio.paused) audio.play().catch(() => { });
-        else if (!update.isPlaying && !audio.paused) audio.pause();
+        if (update.isPlaying && audio.paused) {
+          audio.play().catch(() => { });
+        } else if (!update.isPlaying && !audio.paused) {
+          audio.pause();
+        }
         state.isPlaying = update.isPlaying;
         updatePlayBtns(update.isPlaying);
       }
       if (update.currentTime !== undefined) {
-        if (Math.abs(audio.currentTime - update.currentTime) > 2) {
-          audio.currentTime = update.currentTime + 0.5; // slight forward sync
+        // Only jump if deviation is significant (> 2.5s)
+        const deviation = Math.abs(audio.currentTime - update.currentTime);
+        if (deviation > 2.5) {
+          console.log(`[Sync] Correcting drift: ${deviation.toFixed(2)}s`);
+          audio.currentTime = update.currentTime + 0.3; // Slight offset to account for network latency
         }
       }
     } else {
@@ -1010,13 +1025,14 @@
 
     try {
       audio.src = `/api/stream/${encodeURIComponent(song.videoId)}`;
+      emitRoomState(); // Broadcast immediately so others can start loading phase
       audio.load();
       await audio.play();
       state.isPlaying = true;
       updatePlayBtns(true);
       $('#np-disc')?.classList.add('spinning');
       loadRecommendations(song.videoId);
-      emitRoomState(); // Broadcast new song
+      emitRoomState(); // Broadcast again with playing state
     } catch (err) {
       console.error('Play error:', err);
       toast('Không thể phát bài hát này', 'error');
