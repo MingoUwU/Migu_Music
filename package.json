@@ -1,8 +1,8 @@
 {
   "name": "migu-music",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "author": "TrungNam",
-  "description": "MiGu Music Player - Personal YouTube music streaming app",
+  "description": "MiGu Music Player",
   "main": "main.js",
   "repository": {
     "type": "git",
