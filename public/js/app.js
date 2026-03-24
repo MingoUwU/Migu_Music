@@ -497,6 +497,7 @@
             return; // Don't proceed with full join until validated
           } else {
             window.hasValidatedPw = true;
+            window.targetSyncTime = null;
           }
         }
 
@@ -512,6 +513,7 @@
 
         const wasHost = isRoomHost;
         isRoomHost = (hostId === myUserId);
+        window.currentRoomHostId = hostId; // Store for broadcast validation
         const hc = $('#host-controls');
         if (hc) hc.style.display = isRoomHost ? 'block' : 'none';
 
@@ -577,6 +579,14 @@
 
   function handleStateUpdate(update) {
     if (!roomCode || update.senderId === myUserId) return;
+
+    // Strict Host Validation for playback updates
+    const isPlaybackUpdate = update.currentSong !== undefined || update.isPlaying !== undefined || update.currentTime !== undefined;
+    if (isPlaybackUpdate && window.currentRoomHostId && update.senderId !== window.currentRoomHostId) {
+      console.warn(`[Sync] Ignoring playback update from non-host: ${update.senderId}`);
+      return;
+    }
+
     isProcessingRoomSync = true;
 
     if (update.queue !== undefined) {
@@ -592,19 +602,27 @@
     if (update.currentSong !== undefined && update.currentSong !== null) {
       const isNewSong = !state.currentSongInfo || state.currentSongInfo.videoId !== update.currentSong.videoId;
       if (isNewSong) {
-
-        // ── Removed Sync Prompt Modal — Always Auto Sync instantly ──
-        hasShownSyncPrompt = true;
-
-        hasShownSyncPrompt = true;
-
         state.currentIndex = update.queue ? update.queue.findIndex(q => q.videoId === update.currentSong.videoId) : state.currentIndex;
         state.currentSongInfo = update.currentSong;
         updateUI(update.currentSong);
         showBar(true);
+        
+        // Store target sync time for when metadata is loaded
+        window.targetSyncTime = update.currentTime || 0;
+        
         try {
           audio.src = '/api/stream/' + update.currentSong.videoId;
           audio.load();
+          
+          // Ensure we jump to time ONLY after metadata is ready
+          audio.onloadedmetadata = () => {
+             if (window.targetSyncTime !== null) {
+                console.log(`[Sync] Metadata loaded, jumping to: ${window.targetSyncTime}s`);
+                audio.currentTime = window.targetSyncTime;
+                window.targetSyncTime = null;
+                if (update.isPlaying) audio.play().catch(() => {});
+             }
+          };
         } catch (e) { }
       }
     }
@@ -626,12 +644,12 @@
         state.isPlaying = update.isPlaying;
         updatePlayBtns(update.isPlaying);
       }
-      if (update.currentTime !== undefined) {
+      if (update.currentTime !== undefined && window.targetSyncTime === null) {
         // Only jump if deviation is significant (> 2.5s)
         const deviation = Math.abs(audio.currentTime - update.currentTime);
         if (deviation > 2.5) {
-          console.log(`[Sync] Correcting drift: ${deviation.toFixed(2)}s`);
-          audio.currentTime = update.currentTime + 0.3; // Slight offset to account for network latency
+          console.log(`[Sync] Correcting drift from Host: ${deviation.toFixed(2)}s`);
+          audio.currentTime = update.currentTime + 0.3; 
         }
       }
     } else {
@@ -647,18 +665,25 @@
 
   function emitRoomState(partialState = {}, force = false) {
     if (!roomChannel || !roomCode || (isProcessingRoomSync && !force)) return;
+    
     const update = {
       senderId: myUserId,
       queue: state.queue,
       ...partialState
     };
+
     if (isRoomHost) {
       update.currentSong = state.currentSongInfo;
       update.isPlaying = state.isPlaying;
       update.currentTime = audio.currentTime;
       update.syncMode = $('#host-sync-mode')?.checked ? 'sync' : 'start';
+      
+      // ONLY the host broadcasts playback state to everyone
+      roomChannel.send({ type: 'broadcast', event: 'room_state', payload: update });
+    } else if (partialState.queue) {
+      // Guests can ONLY broadcast queue updates (like adding a song)
+      roomChannel.send({ type: 'broadcast', event: 'room_state', payload: { senderId: myUserId, queue: partialState.queue } });
     }
-    roomChannel.send({ type: 'broadcast', event: 'room_state', payload: update });
   }
 
   function addChatMessage(text, isSelf) {

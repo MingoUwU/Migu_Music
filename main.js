@@ -185,6 +185,7 @@ app.whenReady().then(async () => {
   }, 60 * 60 * 1000);
 
   // Initial check
+  console.log('[Updater] Checking for updates... Current version:', app.getVersion());
   autoUpdater.checkForUpdatesAndNotify();
 });
 
