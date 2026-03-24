@@ -763,7 +763,7 @@
           renderRoomQueue();
           renderQueue();
           saveState();
-          emitRoomState();
+          emitRoomState({ queue: state.queue });
         }
       });
     });
@@ -786,20 +786,11 @@
         renderRoomQueue();
         renderQueue();
         saveState();
-        emitRoomState();
+        emitRoomState({ queue: state.queue });
       });
     });
   }
 
-  // ── Greeting ──────────────────────────────────────────────────
-  function setGreeting() {
-    const h = new Date().getHours();
-    const el = $('#greeting-text');
-    const sub = $('#greeting-sub');
-    if (h < 12) { el.textContent = 'Chào buổi sáng! '; sub.textContent = 'Bắt đầu ngày mới với âm nhạc'; }
-    else if (h < 18) { el.textContent = 'Chào buổi chiều! '; sub.textContent = 'Thưởng thức âm nhạc thôi nào'; }
-    else { el.textContent = 'Chào buổi tối! '; sub.textContent = 'Thư giãn với những giai điệu hay'; }
-  }
 
   // ── Particles ─────────────────────────────────────────────────
   function setupParticles() {
@@ -1694,7 +1685,7 @@
       if (roomCode) renderRoomQueue();
       saveState();
       toast('Đã xóa hàng chờ', 'info');
-      emitRoomState();
+      emitRoomState({ queue: state.queue });
     });
   }
 
@@ -1807,7 +1798,7 @@
         renderQueue();
         if (roomCode) renderRoomQueue();
         saveState();
-        emitRoomState();
+        emitRoomState({ queue: state.queue });
       });
     });
 
