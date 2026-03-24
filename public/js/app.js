@@ -423,6 +423,7 @@
 
     roomCode = code.toUpperCase();
     isProcessingRoomSync = true;
+    window.targetSyncTime = null; // Clear any old sync time
 
     if (syncHeartbeat) clearInterval(syncHeartbeat);
     syncHeartbeat = setInterval(() => {
@@ -514,6 +515,12 @@
       .on('broadcast', { event: 'reaction' }, ({ payload }) => {
         showReaction(payload.emoji, false);
       })
+      .on('broadcast', { event: 'sync_request' }, () => {
+        if (isRoomHost) {
+          console.log('[Sync] Received sync request, responding immediately...');
+          emitRoomState({}, true);
+        }
+      })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
           $('#room-setup-panel').style.display = 'none';
@@ -527,6 +534,14 @@
           await roomChannel.track({
             joined_at: Date.now()
           });
+
+          // Request initial sync from host
+          setTimeout(() => {
+            if (roomChannel) {
+              console.log('[Sync] Requesting initial state from host...');
+              roomChannel.send({ type: 'broadcast', event: 'sync_request', payload: {} });
+            }
+          }, 500);
         }
       });
   }
@@ -555,14 +570,15 @@
 
     if (update.currentSong !== undefined && update.currentSong !== null) {
       const isNewSong = !state.currentSongInfo || state.currentSongInfo.videoId !== update.currentSong.videoId;
+      
+      // Store target sync time for when metadata is loaded
+      window.targetSyncTime = update.currentTime || 0;
+
       if (isNewSong) {
         state.currentIndex = update.queue ? update.queue.findIndex(q => q.videoId === update.currentSong.videoId) : state.currentIndex;
         state.currentSongInfo = update.currentSong;
         updateUI(update.currentSong);
         showBar(true);
-        
-        // Store target sync time for when metadata is loaded
-        window.targetSyncTime = update.currentTime || 0;
         
         try {
           audio.src = '/api/stream/' + update.currentSong.videoId;
@@ -573,11 +589,28 @@
              if (window.targetSyncTime !== null) {
                 console.log(`[Sync] Metadata loaded, jumping to: ${window.targetSyncTime}s`);
                 audio.currentTime = window.targetSyncTime;
+                const t = window.targetSyncTime;
                 window.targetSyncTime = null;
-                if (update.isPlaying) audio.play().catch(() => {});
+                if (update.isPlaying) {
+                  audio.play().catch((err) => {
+                    console.warn('[Sync] Autoplay blocked, showing prompt');
+                    toast('Bấm Play để đồng bộ với Host', 'info');
+                  });
+                }
              }
           };
         } catch (e) { }
+      } else if (window.targetSyncTime !== null) {
+        // Same song, but we just joined and need to align to targetSyncTime
+        console.log(`[Sync] Same song, immediate jump to: ${window.targetSyncTime}s`);
+        audio.currentTime = window.targetSyncTime;
+        window.targetSyncTime = null;
+        if (update.isPlaying && audio.paused) {
+          audio.play().catch(() => {
+            console.warn('[Sync] Autoplay blocked on same-song join');
+            toast('Bấm Play để đồng bộ với Host', 'info');
+          });
+        }
       }
     }
 
