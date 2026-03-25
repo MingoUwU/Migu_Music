@@ -134,14 +134,52 @@ function runYtDlp(args) {
   });
 }
 
+// ── YouTube Innertube Clients (fallback chain) ───────────────────
+const INNERTUBE_CLIENTS = [
+  {
+    clientName: 'WEB',
+    clientVersion: '2.20240101.00.00',
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+  },
+  {
+    clientName: 'TVHTML5',
+    clientVersion: '7.20240101.00.00',
+    userAgent: 'Mozilla/5.0 (SMART-TV; Linux; Tizen 6.0) AppleWebKit/538.1'
+  },
+  {
+    clientName: 'ANDROID',
+    clientVersion: '19.09.37',
+    userAgent: 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip'
+  },
+  {
+    clientName: 'MWEB',
+    clientVersion: '2.20240101.00.00',
+    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15'
+  },
+];
+
+let currentClientIndex = 0;
+
+function getCurrentClient() {
+  return INNERTUBE_CLIENTS[currentClientIndex];
+}
+
+function rotateClient() {
+  currentClientIndex = (currentClientIndex + 1) % INNERTUBE_CLIENTS.length;
+  const c = getCurrentClient();
+  log(`[MiGu] Rotated to Innertube client: ${c.clientName}`, 'WARN');
+  return c;
+}
+
 // ── YouTube Innertube Search (no API key needed) ─────────────────
-async function youtubeSearch(query) {
+async function youtubeSearch(query, retries = INNERTUBE_CLIENTS.length) {
+  const client = getCurrentClient();
   const url = 'https://www.youtube.com/youtubei/v1/search';
   const body = {
     context: {
       client: {
-        clientName: 'WEB',
-        clientVersion: '2.20240101.00.00',
+        clientName: client.clientName,
+        clientVersion: client.clientVersion,
         hl: 'vi',
         gl: 'VN'
       }
@@ -149,16 +187,26 @@ async function youtubeSearch(query) {
     query: query,
   };
 
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-    },
-    body: JSON.stringify(body)
-  });
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': client.userAgent
+      },
+      body: JSON.stringify(body)
+    });
+  } catch (e) {
+    if (retries > 1) { rotateClient(); return youtubeSearch(query, retries - 1); }
+    throw e;
+  }
 
-  if (!res.ok) throw new Error(`Search returned ${res.status}`);
+  if (!res.ok) {
+    log(`[MiGu] Search client ${client.clientName} returned ${res.status}, rotating...`, 'WARN');
+    if (retries > 1) { rotateClient(); return youtubeSearch(query, retries - 1); }
+    throw new Error(`Search returned ${res.status}`);
+  }
   const data = await res.json();
 
   const results = [];
@@ -511,8 +559,17 @@ app.get('/api/health', (req, res) => {
     version: '2.0.0',
     ytDlp: !!ytDlpPath,
     ytDlpPath: ytDlpPath ? 'Found' : 'Missing',
-    uptime: process.uptime()
+    uptime: process.uptime(),
+    currentClient: getCurrentClient().clientName,
+    clientIndex: currentClientIndex,
+    totalClients: INNERTUBE_CLIENTS.length
   });
+});
+
+// ── API: Rotate Innertube Client ─────────────────────────────────
+app.post('/api/rotate-client', (req, res) => {
+  const client = rotateClient();
+  res.json({ success: true, client: client.clientName, index: currentClientIndex });
 });
 
 // ── SPA Fallback ─────────────────────────────────────────────────

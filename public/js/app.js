@@ -121,7 +121,7 @@
         if (!data.ytDlp) {
           toast('Cảnh báo: Không tìm thấy trình phát nhạc (yt-dlp)', 'error');
         }
-        console.log('[MiGu] Server connection: OK');
+        console.log(`[MiGu] Server OK | Client: ${data.currentClient} (${data.clientIndex + 1}/${data.totalClients})`);
       }
     } catch (e) {
       console.error('[MiGu] Server health check failed');
@@ -935,7 +935,22 @@
       results.innerHTML = data.results.map(item => renderResultItem(item)).join('');
       bindResultActions(results);
     } catch (err) {
-      results.innerHTML = '<div class="empty-state"><p>Lỗi tìm kiếm. Thử lại sau.</p></div>';
+      results.innerHTML = `<div class="empty-state">
+        <p>Lỗi tìm kiếm. Thử lại sau.</p>
+        <button class="btn-primary" id="btn-rotate-client" style="margin-top:12px;font-size:12px;">
+          🔄 Đổi server tìm kiếm
+        </button>
+      </div>`;
+      $('#btn-rotate-client')?.addEventListener('click', async () => {
+        try {
+          const r = await fetch('/api/rotate-client', { method: 'POST' });
+          const d = await r.json();
+          toast(`Đã đổi sang server: ${d.client}`, 'success');
+          performSearch(q);
+        } catch (e) {
+          toast('Không thể đổi server', 'error');
+        }
+      });
     }
   }
 
