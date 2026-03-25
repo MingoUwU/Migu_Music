@@ -107,6 +107,8 @@
     if (p) p.textContent = sub;
     if (window.electronAPI && window.electronAPI.onUpdateMsg) {
       window.electronAPI.onUpdateMsg((msg) => toast(msg, 'info'));
+      // Signal ready to main process
+      window.electronAPI.signalReady();
     }
   }
 
@@ -148,6 +150,17 @@
     setGreeting();
     audio.volume = state.volume / 100;
     $('#fav-count').textContent = state.favorites.length;
+
+    // Allow manual check by clicking version
+    const ver = $('.logo-version');
+    if (ver) {
+      ver.style.cursor = 'pointer';
+      ver.title = 'Click để kiểm tra cập nhật';
+      ver.addEventListener('click', () => {
+        toast('Đang kiểm tra cập nhật...', 'info');
+        if (window.electronAPI) window.electronAPI.checkUpdate();
+      });
+    }
 
     if (state.queue && state.queue.length > 0) {
       renderQueue();

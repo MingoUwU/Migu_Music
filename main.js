@@ -178,15 +178,30 @@ app.whenReady().then(async () => {
   createWindow();
   createTray();
   
-  // ── Auto Update ──────────────────────────────────────────────
-  // Check for updates every 1 hour
-  setInterval(() => {
-    autoUpdater.checkForUpdatesAndNotify();
-  }, 60 * 60 * 1000);
+  // ── Auto Update Logic ────────────────────────────────────────
+  autoUpdater.autoDownload = true;
+  autoUpdater.allowPrerelease = false;
+  autoUpdater.logger = console; // Basic console logging for dev/packaged view
 
-  // Initial check
-  console.log('[Updater] Checking for updates... Current version:', app.getVersion());
-  autoUpdater.checkForUpdatesAndNotify();
+  function checkUpdates() {
+    console.log('[Updater] Checking for updates... Current version:', app.getVersion());
+    autoUpdater.checkForUpdatesAndNotify().catch(err => {
+      console.error('[Updater] Failed to check for updates:', err);
+    });
+  }
+
+  // Initial check after window is ready or from IPC
+  ipcMain.on('renderer-ready', () => {
+    console.log('[Updater] Renderer ready, starting update check.');
+    checkUpdates();
+  });
+
+  // Periodical check every 2 hours
+  setInterval(checkUpdates, 2 * 60 * 60 * 1000);
+
+  ipcMain.on('manual-check-update', () => {
+    checkUpdates();
+  });
 });
 
 // Auto-update event handlers
