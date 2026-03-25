@@ -1,14 +1,4 @@
-# <p align="center">🎵 MiGu Music Player</p>
 
-<p align="center">
-  <img src="public/banner.png" alt="MiGu Music Mockup" width="800">
-</p>
-
-<p align="center">
-  <strong>Personal, Ad-Free, Ultra-Premium Music Streaming Experience</strong>
-</p>
-
----
 
 MiGu Music is a sophisticated desktop music application designed with a futuristic **"iOS 26 Liquid Glass"** glassmorphism aesthetic. It provides a seamless, high-quality music listening experience by streaming directly from YouTube, all within a beautiful, ultra-premium interface.
 
