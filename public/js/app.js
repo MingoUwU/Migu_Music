@@ -20,6 +20,8 @@
     idleTimeout: 60000,
     searchDebounce: null,
     currentSongInfo: null,
+    roomQueue: [],
+    activeQueueTab: 'personal',
   };
 
   let socket = null;
@@ -40,8 +42,7 @@
   let userSyncChoice = null;
   let hasShownSyncPrompt = false;
 
-  // Personal state backup when in room
-  let personalBackup = null;
+  // Public Rooms & Sync Prompt State
 
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => document.querySelectorAll(sel);
@@ -139,6 +140,7 @@
     setupIdleDetection();
     setupModals();
     setupMediaSession();
+    setupQueueTabs();
     setupRoom(); // Initialize socket
     setupVisualizer(); // Initialize Web Audio API
     loadTrending();
@@ -238,24 +240,13 @@
       hasShownSyncPrompt = false;
       if (globalLobbyChannel) globalLobbyChannel.untrack().catch(() => { });
 
-      // Restore personal backup
-      if (personalBackup) {
-        state.queue = personalBackup.queue;
-        state.currentIndex = personalBackup.currentIndex;
-        state.currentSongInfo = personalBackup.currentSongInfo;
-        renderQueue();
-        if (state.currentSongInfo) {
-          updateUI(state.currentSongInfo);
-          audio.src = '/api/stream/' + state.currentSongInfo.videoId;
-          audio.load();
-          // we do not resume playback automatically when leaving
-        } else {
-          updateUI(null);
-          audio.src = '';
-          showBar(false);
-        }
-        personalBackup = null;
-      }
+      
+      const tabRoom = $('#tab-room-queue');
+      if (tabRoom) tabRoom.style.display = 'none';
+      state.activeQueueTab = 'personal';
+      $$('.queue-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'personal'));
+      renderQueue();
+
       if (syncHeartbeat) { clearInterval(syncHeartbeat); syncHeartbeat = null; }
       $('#room-setup-panel').style.display = 'block';
       $('#room-active-panel').style.display = 'none';
@@ -318,6 +309,22 @@
       const input = $('#paste-input');
       if (input) input.focus();
     });
+  }
+
+  function setupQueueTabs() {
+    $$('.queue-tab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state.activeQueueTab = btn.dataset.tab;
+        $$('.queue-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === state.activeQueueTab));
+        renderQueue();
+      });
+    });
+  }
+
+  function isSyncActive() {
+    const sm = $('#host-sync-mode');
+    const mode = (sm && isRoomHost) ? (sm.checked ? 'sync' : 'start') : (window.userSyncChoice || 'sync');
+    return roomCode && mode === 'sync';
   }
 
   function setupGlobalLobby() {
@@ -399,19 +406,11 @@
       await supabase.removeChannel(roomChannel);
     }
 
-    // Backup personal queue
-    if (!personalBackup) {
-      personalBackup = {
-        queue: [...state.queue],
-        currentIndex: state.currentIndex,
-        currentSongInfo: state.currentSongInfo
-      };
-    }
 
 
-    // If creating a room, start fresh
+    // If creating a room, start fresh for the room queue
     if (isCreating) {
-      state.queue = [];
+      state.roomQueue = [];
       state.currentIndex = -1;
       state.currentSongInfo = null;
       audio.src = '';
@@ -530,6 +529,9 @@
           toast('Đã tham gia phòng', 'success');
           isProcessingRoomSync = false;
 
+          const tabRoom = $('#tab-room-queue');
+          if (tabRoom) tabRoom.style.display = 'block';
+
           const metadata = window.currentRoomMetadata || {};
           await roomChannel.track({
             joined_at: Date.now()
@@ -559,12 +561,12 @@
     isProcessingRoomSync = true;
 
     if (update.queue !== undefined) {
-      if (update.queue.length > state.queue.length && state.queue.length > 0) {
+      if (update.queue.length > state.roomQueue.length && state.roomQueue.length > 0) {
         const newSong = update.queue[update.queue.length - 1];
         if (newSong) toast(`Bài mới được thêm: ${newSong.title}`, 'success');
       }
-      state.queue = update.queue;
-      renderQueue();
+      state.roomQueue = update.queue;
+      if (state.activeQueueTab === 'room') renderQueue();
       renderRoomQueue();
     }
 
@@ -655,7 +657,7 @@
     
     const update = {
       senderId: myUserId,
-      queue: state.queue,
+      queue: state.roomQueue,
       ...partialState
     };
 
@@ -669,7 +671,7 @@
       roomChannel.send({ type: 'broadcast', event: 'room_state', payload: update });
     } else if (partialState.queue) {
       // Guests can ONLY broadcast queue updates (like adding a song)
-      roomChannel.send({ type: 'broadcast', event: 'room_state', payload: { senderId: myUserId, queue: partialState.queue } });
+      roomChannel.send({ type: 'broadcast', event: 'room_state', payload: { senderId: myUserId, queue: partialState.queue || state.roomQueue } });
     }
   }
 
@@ -723,11 +725,7 @@
   function renderRoomQueue() {
     const container = $('#room-queue-container');
     if (!container) return;
-    if (state.queue.length === 0) {
-      container.innerHTML = '<div class="empty-state small"><p>Hàng chờ phòng trống. Cứ tìm bài và phát nhé!</p></div>';
-      return;
-    }
-    container.innerHTML = state.queue.map((song, i) => `
+    container.innerHTML = state.roomQueue.map((song, i) => `
       <div class="queue-item ${state.currentSongInfo && song.videoId === state.currentSongInfo.videoId ? 'active' : ''}" style="margin-bottom:8px;" data-index="${i}">
         <span class="queue-item-index" style="color:var(--text-secondary);font-size:12px;width:20px;text-align:center;">${i + 1}</span>
         <img class="queue-item-thumb" src="${song.thumbnail}" alt="" loading="lazy" style="width:40px;height:40px;border-radius:4px;object-fit:cover;">
@@ -754,16 +752,16 @@
           let target = state.currentIndex >= 0 ? state.currentIndex + 1 : 0;
           if (target > idx) target--; // Compensate for the element we are about to remove
 
-          const song = state.queue.splice(idx, 1)[0];
-          state.queue.splice(target, 0, song);
+          const song = state.roomQueue.splice(idx, 1)[0];
+          state.roomQueue.splice(target, 0, song);
 
           if (idx < state.currentIndex && target >= state.currentIndex) state.currentIndex--;
           else if (idx > state.currentIndex && target <= state.currentIndex) state.currentIndex++;
 
           renderRoomQueue();
-          renderQueue();
+          if (state.activeQueueTab === 'room') renderQueue();
           saveState();
-          emitRoomState({ queue: state.queue });
+          emitRoomState({ queue: state.roomQueue });
         }
       });
     });
@@ -772,21 +770,21 @@
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const idx = parseInt(btn.dataset.index);
-        state.queue.splice(idx, 1);
+        state.roomQueue.splice(idx, 1);
         if (idx < state.currentIndex) state.currentIndex--;
         else if (idx === state.currentIndex) {
-          if (state.queue.length === 0) {
+          if (state.roomQueue.length === 0) {
             state.currentIndex = -1; audio.pause(); audio.src = '';
             state.isPlaying = false; updatePlayBtns(false); showBar(false);
           } else {
-            state.currentIndex = Math.min(state.currentIndex, state.queue.length - 1);
-            if (isRoomHost) playSong(state.queue[state.currentIndex], false);
+            state.currentIndex = Math.min(state.currentIndex, state.roomQueue.length - 1);
+            if (isRoomHost) playSong(state.roomQueue[state.currentIndex], false);
           }
         }
         renderRoomQueue();
-        renderQueue();
+        if (state.activeQueueTab === 'room') renderQueue();
         saveState();
-        emitRoomState({ queue: state.queue });
+        emitRoomState({ queue: state.roomQueue });
       });
     });
   }
@@ -1091,17 +1089,18 @@
 
   // ── Player Core ───────────────────────────────────────────────
   async function playSong(song, addQ = true) {
-    if (roomCode && !isRoomHost) {
-      console.log('[Room] Guest requested track, adding to Shared Queue instead of playing local.');
+    // If in room and synced, and we are NOT the host, we should not be calling playSong directly unless it's a specific local override
+    if (roomCode && isSyncActive() && !isRoomHost) {
+      console.log('[Room] Guest requested track while synced, directing to room queue.');
       addToQueue(song);
-      toast('Đã thêm bài hát vào hàng chờ phòng', 'success');
       return;
     }
 
     if (addQ) {
-      const idx = state.queue.findIndex(q => q.videoId === song.videoId);
+      const q = (roomCode && isRoomHost) ? state.roomQueue : state.queue;
+      const idx = q.findIndex(q => q.videoId === song.videoId);
       if (idx >= 0) state.currentIndex = idx;
-      else { state.queue.push(song); state.currentIndex = state.queue.length - 1; }
+      else { q.push(song); state.currentIndex = q.length - 1; }
     }
 
     state.currentSongInfo = song;
@@ -1111,14 +1110,14 @@
 
     try {
       audio.src = `/api/stream/${encodeURIComponent(song.videoId)}`;
-      emitRoomState(); // Broadcast immediately so others can start loading phase
+      if (isRoomHost) emitRoomState(); 
       audio.load();
       await audio.play();
       state.isPlaying = true;
       updatePlayBtns(true);
       $('#np-disc')?.classList.add('spinning');
       loadRecommendations(song.videoId);
-      emitRoomState(); // Broadcast again with playing state
+      if (isRoomHost) emitRoomState(); 
     } catch (err) {
       console.error('Play error:', err);
       toast('Không thể phát bài hát này', 'error');
@@ -1740,26 +1739,40 @@
 
   // ── Queue ─────────────────────────────────────────────────────
   function addToQueue(song) {
-    if (!state.queue.some(q => q.videoId === song.videoId)) {
-      state.queue.push(song);
+    const targetQ = roomCode ? state.roomQueue : state.queue;
+    if (!targetQ.some(q => q.videoId === song.videoId)) {
+      targetQ.push(song);
       renderQueue();
       if (roomCode) renderRoomQueue();
       saveState();
-      emitRoomState({ queue: state.queue });
+      if (roomCode) emitRoomState({ queue: state.roomQueue });
+      toast('Đã thêm vào hàng chờ', 'success');
+    } else {
+      toast('Đã có trong hàng chờ', 'info');
     }
   }
 
   function renderQueue() {
     const list = $('#queue-container');
     if (!list) return;
-    if (state.queue.length === 0) {
-      list.innerHTML = '<div class="empty-state small"><p>Chưa có bài hát nào</p></div>';
+
+    const isRoom = roomCode && state.activeQueueTab === 'room';
+    const q = isRoom ? state.roomQueue : state.queue;
+
+    const clearBtn = $('#btn-clear-queue');
+    if (clearBtn) {
+      clearBtn.style.display = q.length > 0 ? 'block' : 'none';
+      clearBtn.textContent = isRoom ? 'Xóa Room Q' : 'Xóa sạch';
+    }
+
+    if (q.length === 0) {
+      list.innerHTML = `<div class="empty-state small"><p>${isRoom ? 'Hàng chờ phòng trống' : 'Chưa có bài hát nào'}</p></div>`;
       return;
     }
 
-    list.innerHTML = state.queue.map((song, i) => `
-      <div class="queue-item ${i === state.currentIndex ? 'active' : ''}" data-index="${i}">
-        <span class="queue-item-index">${i === state.currentIndex ? '▶' : (i + 1)}</span>
+    list.innerHTML = q.map((song, i) => `
+      <div class="queue-item ${state.currentSongInfo && song.videoId === state.currentSongInfo.videoId ? 'active' : ''}" data-index="${i}">
+        <span class="queue-item-index">${(state.currentSongInfo && song.videoId === state.currentSongInfo.videoId) ? '▶' : (i + 1)}</span>
         <img class="queue-item-thumb" src="${song.thumbnail}" alt="" loading="lazy">
         <div class="queue-item-info">
           <div class="queue-item-title">${esc(song.title)}</div>
@@ -1775,8 +1788,21 @@
       item.addEventListener('click', (e) => {
         if (e.target.closest('.queue-item-remove')) return;
         const idx = parseInt(item.dataset.index);
-        state.currentIndex = idx;
-        playSong(state.queue[idx], false);
+        
+        if (isRoom) {
+          if (isRoomHost) playSong(state.roomQueue[idx], false);
+          else toast('Chỉ Host mới có quyền chọn bài phát trực tiếp', 'info');
+        } else {
+          if (roomCode && isSyncActive()) {
+            if (confirm('Dừng nghe chung để phát danh sách cá nhân?')) {
+              window.userSyncChoice = 'start'; // "start" mode = unsynced local
+              playSong(state.queue[idx], false);
+            }
+          } else {
+            state.currentIndex = idx;
+            playSong(state.queue[idx], false);
+          }
+        }
       });
     });
 
@@ -1784,21 +1810,19 @@
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const idx = parseInt(btn.dataset.index);
-        state.queue.splice(idx, 1);
-        if (idx < state.currentIndex) state.currentIndex--;
-        else if (idx === state.currentIndex) {
-          if (state.queue.length === 0) {
-            state.currentIndex = -1; audio.pause(); audio.src = '';
-            state.isPlaying = false; updatePlayBtns(false); showBar(false);
-          } else {
-            state.currentIndex = Math.min(state.currentIndex, state.queue.length - 1);
-            playSong(state.queue[state.currentIndex], false);
+        if (isRoom) {
+          state.roomQueue.splice(idx, 1);
+          emitRoomState({ queue: state.roomQueue });
+          renderRoomQueue();
+        } else {
+          state.queue.splice(idx, 1);
+          if (idx < state.currentIndex) state.currentIndex--;
+          else if (idx === state.currentIndex) {
+            // handle current removal if needed
           }
         }
         renderQueue();
-        if (roomCode) renderRoomQueue();
         saveState();
-        emitRoomState({ queue: state.queue });
       });
     });
 

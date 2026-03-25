@@ -544,19 +544,10 @@
           <!-- Queue / Suggest panel -->
           <div class="np-right">
             <div class="np-queue-panel">
-              <div class="queue-header">
-                <h3>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <line x1="8" y1="6" x2="21" y2="6" />
-                    <line x1="8" y1="12" x2="21" y2="12" />
-                    <line x1="8" y1="18" x2="21" y2="18" />
-                    <line x1="3" y1="6" x2="3.01" y2="6" />
-                    <line x1="3" y1="12" x2="3.01" y2="12" />
-                    <line x1="3" y1="18" x2="3.01" y2="18" />
-                  </svg>
-                  Hàng chờ
-                </h3>
-                <button class="btn-text" id="btn-clear-queue">Xóa tất cả</button>
+              <div class="queue-header-tabs">
+                <button class="queue-tab active" data-tab="personal">Cá nhân</button>
+                <button class="queue-tab" data-tab="room" id="tab-room-queue" style="display:none">Phòng</button>
+                <button class="btn-text" id="btn-clear-queue" style="margin-left:auto">Xóa sạch</button>
               </div>
               <div class="queue-list" id="queue-container">
                 <div class="empty-state small">
