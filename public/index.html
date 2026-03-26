@@ -198,9 +198,9 @@
 
         <!-- State 1: Setup / Lobby -->
         <div id="room-setup-panel" class="room-panel" style="display:block;">
-          <div style="display:flex; gap:30px; height:calc(100vh - 200px);">
+          <div class="room-setup-cols" style="display:flex; gap:30px; height:calc(100vh - 200px);">
             <!-- Cột Trái: Tạo & Tham gia -->
-            <div
+            <div class="room-setup-create"
               style="flex:1; background:var(--glass); border-radius:var(--r-md); padding:30px; display:flex; flex-direction:column;">
               <svg style="width:48px;height:48px;color:var(--accent);margin-bottom:20px;align-self:center;"
                 viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -213,7 +213,7 @@
               <p style="color:var(--text-secondary);margin-bottom:20px;text-align:center;font-size:14px;">Tạo phòng để
                 nghe nhạc cùng mọi người trên khắp thế giới.</p>
 
-              <div style="display:flex; gap:10px; margin-bottom:15px;">
+              <div class="room-create-inputs" style="display:flex; gap:10px; margin-bottom:15px;">
                 <div class="paste-input-wrap" style="flex:1;"><input type="text" id="room-create-name"
                     placeholder="Tên phòng (tuỳ chọn)" maxlength="30"></div>
                 <div class="paste-input-wrap" style="flex:1;"><input type="text" id="room-create-tags"
@@ -384,8 +384,55 @@
         </div>
       </section>
 
-      <!-- ─── Playlist View ─────────────────────── -->
-      <section class="view" id="view-playlist">
+      <!-- ─── Library (Mobile) ────────────────── -->
+      <section class="view" id="view-library">
+        <div class="view-header" style="display:flex;align-items:center;justify-content:space-between;">
+          <div>
+            <h2>📂 Thư viện</h2>
+            <p class="greeting-sub" id="library-sub">Playlist của bạn</p>
+          </div>
+          <button class="btn-icon" id="btn-create-playlist-mobile" title="Tạo playlist mới"
+            style="width:36px;height:36px;background:var(--glass);border:1px solid var(--glass-border);border-radius:var(--r-full);">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
+        </div>
+
+        <!-- Yêu thích shortcut -->
+        <div class="library-mobile-list" id="library-mobile-list">
+          <button class="library-mobile-item" id="btn-library-favorites">
+            <div class="library-mobile-icon" style="background:rgba(255,99,99,0.15);">
+              <svg viewBox="0 0 24 24" fill="var(--accent)" stroke="var(--accent)" stroke-width="2">
+                <path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/>
+              </svg>
+            </div>
+            <div class="library-mobile-info">
+              <span class="library-mobile-name">Yêu thích</span>
+              <span class="library-mobile-count" id="library-fav-count">0 bài</span>
+            </div>
+            <svg class="library-mobile-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+          </button>
+        </div>
+
+        <!-- User playlists -->
+        <div id="library-playlists-container" style="display:flex;flex-direction:column;gap:2px;margin-top:4px;"></div>
+
+        <div id="library-empty" class="empty-state" style="display:none;">
+          <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
+          </svg>
+          <p>Chưa có playlist nào</p>
+          <button class="btn-primary" id="btn-library-create-first" style="margin-top:12px;font-size:12px;">
+            Tạo playlist đầu tiên
+          </button>
+        </div>
+      </section>
+
+      <!-- ─── Playlist View ─────────────────────── -->      <section class="view" id="view-playlist">
         <div class="view-header" style="display:flex;align-items:center;gap:12px;justify-content:space-between;">
           <div>
             <h2 id="playlist-view-title">Playlist</h2>
@@ -407,6 +454,12 @@
 
       <!-- ─── Now Playing ──────────────────────── -->
       <section class="view" id="view-nowplaying">
+        <!-- Mobile back button -->
+        <button class="np-mobile-back" id="np-mobile-back">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polyline points="15 18 9 12 15 6"/>
+          </svg>
+        </button>
         <div class="nowplaying-layout">
           <div class="np-left">
             <div class="visualizer-wrapper">
@@ -642,6 +695,46 @@
 
     </main>
   </div>
+
+  <!-- Mobile Bottom Navigation -->
+  <nav class="mobile-nav" id="mobile-nav">
+    <button class="mobile-nav-btn active" data-view="home">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>
+        <polyline points="9 22 9 12 15 12 15 22"/>
+      </svg>
+      Trang chủ
+    </button>
+    <button class="mobile-nav-btn" data-view="search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="11" cy="11" r="8"/>
+        <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      </svg>
+      Tìm kiếm
+    </button>
+    <button class="mobile-nav-btn" data-view="paste">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/>
+        <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>
+      </svg>
+      Dán Link
+    </button>
+    <button class="mobile-nav-btn" data-view="room">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
+        <circle cx="9" cy="7" r="4"/>
+        <path d="M23 21v-2a4 4 0 00-3-3.87"/>
+        <path d="M16 3.13a4 4 0 010 7.75"/>
+      </svg>
+      Nghe chung
+    </button>
+    <button class="mobile-nav-btn" data-view="library">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
+      </svg>
+      Thư viện
+    </button>
+  </nav>
 
   <!-- Toast Container -->
   <div id="toast-container" class="toast-container"></div>

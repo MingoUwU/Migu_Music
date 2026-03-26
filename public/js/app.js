@@ -1,4 +1,4 @@
-/* ═══════════════════════════════════════════════════════════════
+﻿/* ═══════════════════════════════════════════════════════════════
    MiGu Music Player v2.0.7 — iOS 26 Liquid Glass Edition
    ═══════════════════════════════════════════════════════════════ */
 
@@ -8,6 +8,7 @@
   // ── State ─────────────────────────────────────────────────────
   const state = {
     currentView: 'home',
+    previousView: 'home',
     queue: [],
     currentIndex: -1,
     isPlaying: false,
@@ -841,9 +842,20 @@
 
     // Favorites button in sidebar
     $('#btn-favorites')?.addEventListener('click', () => switchView('favorites'));
+
+    // Mobile bottom nav
+    document.querySelectorAll('.mobile-nav-btn').forEach(btn => {
+      btn.addEventListener('click', () => switchView(btn.dataset.view));
+    });
+
+    // Mobile back button in Now Playing
+    document.getElementById('np-mobile-back')?.addEventListener('click', () => {
+      switchView(state.previousView || 'home');
+    });
   }
 
   function switchView(view) {
+    if (state.currentView !== view) state.previousView = state.currentView;
     state.currentView = view;
     $$('.view').forEach(v => v.classList.remove('active'));
     const el = $(`#view-${view}`);
@@ -859,6 +871,14 @@
 
     if (view === 'search') setTimeout(() => $('#search-input')?.focus(), 100);
     if (view === 'favorites') renderFavoritesList();
+    if (view === 'library') renderLibraryMobile();
+
+    // Sync mobile nav
+    const mobileNav = document.getElementById('mobile-nav');
+    if (mobileNav) mobileNav.style.display = (view === 'nowplaying') ? 'none' : '';
+    document.querySelectorAll('.mobile-nav-btn').forEach(b => b.classList.remove('active'));
+    const mobileNavBtn = document.querySelector('.mobile-nav-btn[data-view="' + view + '"]');
+    if (mobileNavBtn) mobileNavBtn.classList.add('active');
 
     resetIdle();
   }
@@ -2019,6 +2039,7 @@
 
   // ── Playlists / Library ───────────────────────────────────────
   function renderPlaylists() {
+    renderLibraryMobile();
     const container = $('#playlists-container');
     const existingPlaylists = container.querySelectorAll('.playlist-item:not(#btn-favorites)');
     existingPlaylists.forEach(el => el.remove());
@@ -2035,6 +2056,32 @@
     });
   }
 
+  function renderLibraryMobile() {
+    const container = document.getElementById('library-playlists-container');
+    const empty = document.getElementById('library-empty');
+    const favCount = document.getElementById('library-fav-count');
+    if (favCount) favCount.textContent = state.favorites.length + ' bai';
+    const libSub = document.getElementById('library-sub');
+    const names = Object.keys(state.playlists);
+    if (libSub) libSub.textContent = names.length + ' playlist';
+    if (!container) return;
+    container.innerHTML = '';
+    if (names.length === 0) {
+      if (empty) empty.style.display = '';
+      return;
+    }
+    if (empty) empty.style.display = 'none';
+    names.forEach(function(name) {
+      const btn = document.createElement('button');
+      btn.className = 'library-mobile-item';
+      const icon = '<div class="library-mobile-icon" style="background:rgba(91,154,255,0.12);"><svg viewBox="0 0 24 24" fill="none" stroke="#5b9aff" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>';
+      const info = '<div class="library-mobile-info"><span class="library-mobile-name">' + esc(name) + '</span><span class="library-mobile-count">' + state.playlists[name].length + ' bai</span></div>';
+      const arrow = '<svg class="library-mobile-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>';
+      btn.innerHTML = icon + info + arrow;
+      btn.addEventListener('click', function() { openPlaylistView(name); });
+      container.appendChild(btn);
+    });
+  }
   function setupModals() {
     const overlay = $('#modal-overlay');
     const content = $('#modal-content');
@@ -2070,6 +2117,29 @@
     });
   }
 
+    // Mobile library buttons
+    document.getElementById('btn-library-favorites')?.addEventListener('click', function() { switchView('favorites'); });
+    document.getElementById('btn-library-create-first')?.addEventListener('click', function() {
+      document.getElementById('btn-create-playlist-mobile')?.click();
+    });
+    document.getElementById('btn-create-playlist-mobile')?.addEventListener('click', function() {
+      var overlay = $('#modal-overlay');
+      var mc = $('#modal-content');
+      mc.innerHTML = '<h3>Tao Playlist Moi</h3><input type="text" id="new-playlist-name" placeholder="Ten playlist..." autofocus><div class="modal-actions"><button class="btn-text" id="modal-cancel">Huy</button><button class="btn-primary" id="modal-create" style="padding:8px 18px;">Tao</button></div>';
+      overlay.style.display = '';
+      $('#modal-cancel').addEventListener('click', function() { overlay.style.display = 'none'; });
+      $('#modal-create').addEventListener('click', function() {
+        var name = $('#new-playlist-name').value.trim();
+        if (!name) return;
+        if (state.playlists[name]) { toast('Playlist da ton tai', 'error'); return; }
+        state.playlists[name] = [];
+        saveState();
+        renderPlaylists();
+        overlay.style.display = 'none';
+        toast('Da tao: ' + name, 'success');
+      });
+      $('#new-playlist-name').addEventListener('keydown', function(e) { if (e.key === 'Enter') $('#modal-create').click(); });
+    });
   // ── Keyboard ──────────────────────────────────────────────────
   function setupKeyboardShortcuts() {
     document.addEventListener('keydown', (e) => {

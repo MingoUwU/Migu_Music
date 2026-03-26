@@ -999,3 +999,341 @@ img    { display: block; max-width: 100%; }
 /* ── Player Bar Spacing ───────────────────────────────────────── */
 .has-player .view { padding-bottom: 80px; }
 #view-nowplaying.active ~ .player-bar { display: none !important; }
+
+/* ═══════════════════════════════════════════════════════════════
+   Mobile Responsive — MiGu Music
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Mobile Bottom Nav ────────────────────────────────────────── */
+.mobile-nav {
+  display: none;
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  height: 60px;
+  background: rgba(8, 8, 22, 0.96);
+  backdrop-filter: blur(40px) saturate(1.3);
+  -webkit-backdrop-filter: blur(40px) saturate(1.3);
+  border-top: 1px solid var(--glass-border);
+  z-index: 60;
+  justify-content: space-around;
+  align-items: center;
+  padding: 0 8px;
+}
+
+.mobile-nav-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 12px;
+  border-radius: var(--r-sm);
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 500;
+  transition: all 0.2s var(--ease);
+  min-width: 52px;
+}
+
+.mobile-nav-btn svg { width: 20px; height: 20px; }
+.mobile-nav-btn.active { color: var(--accent); }
+.mobile-nav-btn.active svg { color: var(--accent); }
+
+/* ── Responsive Breakpoints ───────────────────────────────────── */
+@media (max-width: 768px) {
+  /* Hide desktop sidebar */
+  .sidebar { display: none; }
+
+  /* Show mobile nav */
+  .mobile-nav { display: flex; }
+
+  /* Main content takes full width */
+  .main-content {
+    width: 100%;
+    height: 100vh;
+  }
+
+  /* Views padding adjustment */
+  .view {
+    padding: 20px 16px;
+    padding-bottom: 140px; /* space for player bar + mobile nav */
+  }
+
+  /* Player bar spans full width */
+  .player-bar {
+    left: 0;
+    bottom: 60px; /* above mobile nav */
+    z-index: 55;
+  }
+
+  /* Mobile nav always on top */
+  .mobile-nav {
+    z-index: 70 !important;
+    pointer-events: all !important;
+  }
+
+  .mobile-nav-btn {
+    pointer-events: all !important;
+    -webkit-tap-highlight-color: rgba(255,99,99,0.2);
+    touch-action: manipulation;
+  }
+
+  /* Ensure body doesn't clip fixed elements */
+  html, body {
+    overflow: visible;
+    height: 100%;
+  }
+
+  #app {
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* Home view */
+  .view-header h2 { font-size: 22px; }
+
+  .quick-actions { flex-wrap: wrap; }
+  .quick-action-card { max-width: none; flex: 1; min-width: 120px; }
+
+  /* Trending grid - 2 columns on mobile */
+  .trending-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+
+  /* Search */
+  .search-box { padding: 10px 14px; }
+
+  /* Now Playing - stack vertically */
+  .nowplaying-layout { flex-direction: column; }
+
+  .np-left {
+    padding: 20px 16px 12px;
+    gap: 10px;
+  }
+
+  .visualizer-wrapper {
+    width: 200px;
+    height: 200px;
+    margin-bottom: 10px;
+  }
+
+  .np-right {
+    width: 100%;
+    border-left: none;
+    border-top: 1px solid rgba(255, 255, 255, 0.25);
+    max-height: 40vh;
+    box-shadow: none;
+  }
+
+  .np-title { font-size: 16px; }
+  .np-progress { max-width: 100%; }
+  .np-volume .volume-slider-wrap { width: 80px; }
+
+  /* Room view */
+  #room-setup-panel > div {
+    flex-direction: column !important;
+    height: auto !important;
+  }
+
+  #room-active-panel {
+    flex-direction: column !important;
+    height: auto !important;
+  }
+
+  .room-right {
+    width: 100% !important;
+    max-height: 300px;
+  }
+
+  /* Player bar compact on mobile */
+  .pb-right .pb-time { display: none; }
+  .pb-volume-wrap { display: none; }
+
+  /* Paste view */
+  .paste-container { min-height: 50vh; padding: 20px 0; }
+  .paste-input-wrap { max-width: 100%; }
+
+  /* Modal */
+  .modal { width: calc(100vw - 32px); }
+
+  /* Toast */
+  .toast-container { left: 16px; right: 16px; top: 12px; }
+  .toast { max-width: 100%; }
+
+  /* Has player spacing */
+  .has-player .view { padding-bottom: 140px; }
+  #view-nowplaying.active ~ .player-bar { display: none !important; }
+
+  /* Now playing view full screen on mobile */
+  #view-nowplaying { padding: 0; padding-bottom: 60px; }
+  #view-nowplaying .nowplaying-layout { height: auto; min-height: calc(100vh - 60px); overflow-y: auto; }
+}
+
+@media (max-width: 480px) {
+  .trending-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .view { padding: 16px 12px; padding-bottom: 140px; }
+  .view-header h2 { font-size: 20px; }
+  .visualizer-wrapper { width: 170px; height: 170px; }
+  .np-controls { gap: 8px; }
+  .np-ctrl-btn { width: 32px; height: 32px; }
+  .np-play-btn { width: 46px; height: 46px; }
+  .np-play-btn svg { width: 20px; height: 20px; }
+}
+
+
+
+/* ── Now Playing Mobile Back Button ──────────────────────────── */
+.np-mobile-back {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .np-mobile-back {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: absolute;
+    top: 14px;
+    left: 14px;
+    width: 38px;
+    height: 38px;
+    border-radius: var(--r-full);
+    background: rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(10px);
+    color: var(--text-primary);
+    z-index: 20;
+    transition: background 0.2s;
+  }
+
+  .np-mobile-back svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .np-mobile-back:active {
+    background: rgba(255, 255, 255, 0.2);
+  }
+
+  #view-nowplaying {
+    position: relative;
+  }
+}
+
+/* ── Room View Mobile Fix ─────────────────────────────────────── */
+@media (max-width: 768px) {
+  /* Setup panel: stack columns vertically, remove fixed height */
+  .room-setup-cols {
+    flex-direction: column !important;
+    height: auto !important;
+    gap: 16px !important;
+  }
+
+  /* Create panel takes full width, auto height */
+  .room-setup-create {
+    flex: none !important;
+    width: 100% !important;
+    padding: 20px !important;
+    height: auto !important;
+  }
+
+  /* Hide lobby on mobile */
+  .room-setup-cols > div:last-child:not(.room-setup-create) {
+    display: none !important;
+  }
+
+  /* Stack tên phòng + tags vertically */
+  .room-create-inputs {
+    flex-direction: column !important;
+  }
+
+  .room-create-inputs .paste-input-wrap {
+    flex: none !important;
+    width: 100% !important;
+  }
+
+  /* Active room panel */
+  #room-active-panel {
+    flex-direction: column !important;
+    height: auto !important;
+    min-height: 0 !important;
+  }
+
+  .room-left {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .room-right {
+    width: 100% !important;
+    max-height: 280px !important;
+  }
+
+  /* Room info card buttons wrap on small screens */
+  #room-active-panel .room-info-card > div > div:last-child {
+    flex-wrap: wrap;
+    gap: 6px !important;
+  }
+}
+
+/* ── Library Mobile View ──────────────────────────────────────── */
+.library-mobile-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.library-mobile-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  transition: all 0.2s var(--ease);
+  width: 100%;
+  text-align: left;
+}
+
+.library-mobile-item:hover,
+.library-mobile-item:active {
+  background: var(--glass-hover);
+}
+
+.library-mobile-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--r-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.library-mobile-icon svg { width: 20px; height: 20px; }
+
+.library-mobile-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.library-mobile-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.library-mobile-count {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.library-mobile-arrow {
+  width: 16px;
+  height: 16px;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
