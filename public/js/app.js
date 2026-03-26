@@ -1,4 +1,4 @@
-﻿/* ═══════════════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════════════════
    MiGu Music Player v2.0.7 — iOS 26 Liquid Glass Edition
    ═══════════════════════════════════════════════════════════════ */
 
@@ -42,6 +42,10 @@
   let activePublicRooms = [];
   let userSyncChoice = null;
   let hasShownSyncPrompt = false;
+  
+  // API Configuration
+  let API_URL = localStorage.getItem('migu_api_url') || '';
+  const api = (path) => (API_URL ? (API_URL.endsWith('/') ? API_URL.slice(0, -1) : API_URL) : '') + path;
 
   // Public Rooms & Sync Prompt State
 
@@ -116,7 +120,7 @@
   // ── Init ──────────────────────────────────────────────────────
   async function checkServer() {
     try {
-      const res = await fetch('/api/health');
+      const res = await fetch(api('/api/health'));
       const data = await res.json();
       if (data.status === 'ok') {
         if (!data.ytDlp) {
@@ -146,6 +150,7 @@
     setupQueueTabs();
     setupRoom(); // Initialize socket
     setupVisualizer(); // Initialize Web Audio API
+    setupServerSettings();
     loadTrending();
     renderPlaylists();
     setGreeting();
@@ -169,7 +174,7 @@
         const song = state.queue[state.currentIndex];
         state.currentSongInfo = song;
         updateUI(song);
-        audio.src = `/api/stream/${song.videoId}`;
+        audio.src = api(`/api/stream/${song.videoId}`);
         audio.load();
         showBar(true);
       }
@@ -597,7 +602,7 @@
         showBar(true);
         
         try {
-          audio.src = '/api/stream/' + update.currentSong.videoId;
+          audio.src = api('/api/stream/' + update.currentSong.videoId);
           audio.load();
           
           // Ensure we jump to time ONLY after metadata is ready
@@ -897,7 +902,7 @@
 
       state.searchDebounce = setTimeout(async () => {
         try {
-          const res = await fetch(`/api/suggest?q=${encodeURIComponent(q)}`);
+          const res = await fetch(api(`/api/suggest?q=${encodeURIComponent(q)}`));
           const items = await res.json();
           if (items.length > 0) {
             sugBox.innerHTML = items.slice(0, 6).map(s =>
@@ -946,7 +951,7 @@
     results.innerHTML = '<div class="loading-spinner"><div class="spinner"></div></div>';
 
     try {
-      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+      const res = await fetch(api(`/api/search?q=${encodeURIComponent(q)}`));
       const data = await res.json();
       if (!data.results || data.results.length === 0) {
         results.innerHTML = '<div class="empty-state"><p>Không tìm thấy kết quả</p></div>';
@@ -963,7 +968,7 @@
       </div>`;
       $('#btn-rotate-client')?.addEventListener('click', async () => {
         try {
-          const r = await fetch('/api/rotate-client', { method: 'POST' });
+          const r = await fetch(api('/api/rotate-client'), { method: 'POST' });
           const d = await r.json();
           toast(`Đã đổi sang server: ${d.client}`, 'success');
           performSearch(q);
@@ -1066,7 +1071,7 @@
     preview.innerHTML = '<div class="loading-spinner"><div class="spinner"></div></div>';
 
     try {
-      const res = await fetch(`/api/info/${videoId}`);
+      const res = await fetch(api(`/api/info/${videoId}`));
       const info = await res.json();
       if (info.error) { preview.innerHTML = `<div class="empty-state small"><p>${info.error}</p></div>`; return; }
 
@@ -1096,7 +1101,7 @@
     try {
       // 1. Fetch playlist items (first 15)
       // Pass startVideoId as 'v' param for Mix context
-      const res = await fetch(`/api/playlist-info/${playlistId}${startVideoId ? '?v=' + startVideoId : ''}`);
+      const res = await fetch(api(`/api/playlist-info/${playlistId}${startVideoId ? '?v=' + startVideoId : ''}`));
       const data = await res.json();
       if (data.error || !data.items || data.items.length === 0) {
         throw new Error(data.error || 'Playlist trống hoặc không hợp lệ');
@@ -1157,7 +1162,7 @@
     switchView('nowplaying');
 
     try {
-      audio.src = `/api/stream/${encodeURIComponent(song.videoId)}`;
+      audio.src = api(`/api/stream/${encodeURIComponent(song.videoId)}`);
       if (isRoomHost) emitRoomState(); 
       audio.load();
       await audio.play();
@@ -1699,7 +1704,7 @@
       toast('Lỗi phát nhạc. Đang thử lại...', 'error');
       setTimeout(() => {
         if (state.currentSongInfo) {
-          audio.src = `/api/stream/${state.currentSongInfo.videoId}?t=${Date.now()}`;
+          audio.src = api(`/api/stream/${state.currentSongInfo.videoId}?t=${Date.now()}`);
           audio.load();
           audio.play().then(() => { state.isPlaying = true; updatePlayBtns(true); }).catch(() => { });
         }
@@ -1947,7 +1952,7 @@
     container.innerHTML = '<div class="loading-spinner"><div class="spinner"></div></div>';
 
     try {
-      const res = await fetch(`/api/info/${videoId}`);
+      const res = await fetch(api(`/api/info/${videoId}`));
       const data = await res.json();
       const recs = data.recommendedVideos || [];
 
@@ -1990,7 +1995,7 @@
     const container = $('#trending-container');
     container.innerHTML = '<div class="loading-spinner" style="grid-column: 1 / -1; padding: 80px 0;"><div class="spinner"></div></div>';
     try {
-      const res = await fetch('/api/trending');
+      const res = await fetch(api('/api/trending'));
       const data = await res.json();
 
       if (!data.results || data.results.length === 0) {
@@ -2140,6 +2145,42 @@
       });
       $('#new-playlist-name').addEventListener('keydown', function(e) { if (e.key === 'Enter') $('#modal-create').click(); });
     });
+
+  function setupServerSettings() {
+    const input = $('#server-url-input');
+    const btn = $('#btn-save-server');
+    const info = $('#server-status-info');
+
+    if (input) input.value = API_URL;
+
+    btn?.addEventListener('click', async () => {
+      let val = input.value.trim();
+      if (val && !val.startsWith('http')) val = 'http://' + val;
+      
+      API_URL = val;
+      localStorage.setItem('migu_api_url', val);
+      toast('Đã lưu cấu hình máy chủ', 'success');
+      
+      // Test connection
+      info.textContent = 'Đang kiểm tra kết nối...';
+      try {
+        const res = await fetch(api('/api/health'), { signal: AbortSignal.timeout(5000) });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          info.innerHTML = `<span style="color:var(--accent)">● Kết nối thành công!</span><br>Phiên bản: ${data.version}<br>yt-dlp: ${data.ytDlp ? 'Sẵn sàng' : 'Không tìm thấy'}`;
+          loadTrending(); // Refresh trending if connected
+        }
+      } catch (e) {
+        info.innerHTML = `<span style="color:#ff4757">● Kết nối thất bại</span><br>Mô tả: ${e.message}`;
+      }
+    });
+
+    // Mobile specific: if no API_URL and likely on mobile, show reminder
+    if (!API_URL && (window.innerWidth < 768)) {
+        setTimeout(() => toast('Bạn chưa cài đặt Máy chủ, hãy vào mục Máy chủ để kết nối!', 'warning'), 3000);
+    }
+  }
+
   // ── Keyboard ──────────────────────────────────────────────────
   function setupKeyboardShortcuts() {
     document.addEventListener('keydown', (e) => {
