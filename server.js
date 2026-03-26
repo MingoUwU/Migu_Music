@@ -60,8 +60,20 @@ app.get('/Logo.ico', (req, res) => {
 let ytDlpPath = null;
 
 function findYtDlp() {
-  // 1. Check in Electron resources (production) - HIGHEST PRIORITY
-  // Check both 'app.asar.unpacked' and 'bin' folder
+  const isWin = process.platform === 'win32';
+
+  // 1. Linux common install path (Docker / Railway)
+  if (!isWin) {
+    const linuxPaths = ['/usr/local/bin/yt-dlp', '/usr/bin/yt-dlp', '/bin/yt-dlp'];
+    for (const p of linuxPaths) {
+      if (fs.existsSync(p)) {
+        log('[MiGu] Found yt-dlp at: ' + p);
+        return p;
+      }
+    }
+  }
+
+  // 2. Check in Electron resources (production Windows) - HIGHEST PRIORITY
   if (process.resourcesPath) {
     const paths = [
       path.join(process.resourcesPath, 'bin', 'yt-dlp.exe'),
@@ -75,35 +87,39 @@ function findYtDlp() {
     }
   }
 
-  // 2. Check in node_modules (dev) - Only if not in app.asar
+  // 3. Check in node_modules (dev) - Only if not in app.asar
   if (!__dirname.includes('app.asar')) {
-    const nmPath = path.join(__dirname, 'node_modules', 'youtube-dl-exec', 'bin', 'yt-dlp.exe');
+    const ext = isWin ? '.exe' : '';
+    const nmPath = path.join(__dirname, 'node_modules', 'youtube-dl-exec', 'bin', 'yt-dlp' + ext);
     if (fs.existsSync(nmPath)) {
       log('[MiGu] Found yt-dlp in node_modules (dev)');
       return nmPath;
     }
   }
 
-  // 3. Check system PATH
+  // 4. Check system PATH
   try {
-    const result = execSync('where yt-dlp', { encoding: 'utf-8' }).trim().split('\n')[0];
+    const cmd = isWin ? 'where yt-dlp' : 'which yt-dlp';
+    const result = execSync(cmd, { encoding: 'utf-8' }).trim().split('\n')[0];
     if (result && fs.existsSync(result.trim())) {
-      log('[MiGu] Found yt-dlp in system PATH');
+      log('[MiGu] Found yt-dlp in system PATH: ' + result.trim());
       return result.trim();
     }
   } catch (e) { /* not in PATH */ }
 
-  // 4. Check common locations
-  const common = [
-    path.join(os.homedir(), 'scoop', 'apps', 'yt-dlp', 'current', 'yt-dlp.exe'),
-    path.join(os.homedir(), 'AppData', 'Local', 'Programs', 'yt-dlp', 'yt-dlp.exe'),
-    'C:\\ProgramData\\chocolatey\\bin\\yt-dlp.exe',
-  ];
-  for (const p of common) {
-    if (fs.existsSync(p)) return p;
+  // 5. Windows common locations
+  if (isWin) {
+    const common = [
+      path.join(os.homedir(), 'scoop', 'apps', 'yt-dlp', 'current', 'yt-dlp.exe'),
+      path.join(os.homedir(), 'AppData', 'Local', 'Programs', 'yt-dlp', 'yt-dlp.exe'),
+      'C:\\ProgramData\\chocolatey\\bin\\yt-dlp.exe',
+    ];
+    for (const p of common) {
+      if (fs.existsSync(p)) return p;
+    }
   }
 
-  console.error('[MiGu] CRITICAL: yt-dlp not found!');
+  log('[MiGu] WARNING: yt-dlp not found!', 'WARN');
   return null;
 }
 
