@@ -367,19 +367,48 @@
         </div>
       </section>
 
-      <!-- ─── Favorites ────────────────────────── -->
+      <!-- ─── Favorites / Library ────────────────── -->
       <section class="view" id="view-favorites">
-        <div class="view-header">
-          <h2>❤️ Yêu thích</h2>
-          <p class="greeting-sub" id="fav-sub">0 bài hát</p>
-        </div>
-        <div class="search-results" id="favorites-list">
-          <div class="empty-state">
-            <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <path
-                d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" />
+        <div class="view-header" style="display:flex; align-items:center; justify-content:space-between;">
+          <div>
+            <h2 id="library-title">Thư viện</h2>
+            <p class="greeting-sub" id="fav-sub">0 bài hát</p>
+          </div>
+          <button class="btn-icon mobile-only" id="btn-create-playlist-mobile" title="Tạo playlist mới" style="background:var(--accent-soft); color:var(--accent); border-radius:50%; width:40px; height:40px; display:none; align-items:center; justify-content:center;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:20px; height:20px;">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
             </svg>
-            <p>Chưa có bài hát yêu thích nào</p>
+          </button>
+        </div>
+
+        <div id="mobile-library-content">
+          <div class="section-header">
+            <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;margin-right:8px;vertical-align:middle;"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg> Playlist của bạn</h3>
+          </div>
+          <div class="mobile-playlists-grid" id="mobile-playlists-container">
+            <!-- Playlist cards for mobile -->
+            <div class="playlist-card-mobile" id="btn-favorites-mobile">
+              <div class="playlist-card-icon fav">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>
+              </div>
+              <div class="playlist-card-info">
+                <div class="playlist-card-name">Yêu thích</div>
+                <div class="playlist-card-count" id="fav-count-mobile">0 bài hát</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="section-header" style="margin-top:20px;">
+            <h3>✨ Tất cả bài hát yêu thích</h3>
+          </div>
+          <div class="search-results" id="favorites-list">
+            <div class="empty-state">
+              <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" />
+              </svg>
+              <p>Chưa có bài hát yêu thích nào</p>
+            </div>
           </div>
         </div>
       </section>
@@ -407,6 +436,11 @@
 
       <!-- ─── Now Playing ──────────────────────── -->
       <section class="view" id="view-nowplaying">
+        <button class="mobile-back-btn" id="np-mobile-back">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polyline points="15 18 9 12 15 6"></polyline>
+          </svg>
+        </button>
         <div class="nowplaying-layout">
           <div class="np-left">
             <div class="visualizer-wrapper">
@@ -641,6 +675,37 @@
       </div>
 
     </main>
+
+    <!-- ─── Mobile Bottom Nav ──────────────────────────── -->
+    <nav class="mobile-nav">
+      <button class="mobile-nav-btn active" data-view="home">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+          <polyline points="9 22 9 12 15 12 15 22" />
+        </svg>
+        <span>Home</span>
+      </button>
+      <button class="mobile-nav-btn" data-view="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8" />
+          <line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>
+        <span>Search</span>
+      </button>
+      <button class="mobile-nav-btn" data-view="favorites">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" />
+        </svg>
+        <span>Library</span>
+      </button>
+      <button class="mobile-nav-btn" data-view="room">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+          <circle cx="9" cy="7" r="4" />
+        </svg>
+        <span>Room</span>
+      </button>
+    </nav>
   </div>
 
   <!-- Toast Container -->

@@ -820,7 +820,8 @@
 
   // ── Navigation ────────────────────────────────────────────────
   function setupNavigation() {
-    $$('.nav-btn').forEach(btn => {
+    // Shared navigation for both desktop sidebar and mobile bottom nav
+    $$('.nav-btn, .mobile-nav-btn').forEach(btn => {
       btn.addEventListener('click', () => switchView(btn.dataset.view));
     });
 
@@ -839,19 +840,29 @@
     const npHome = $('#np-btn-home');
     if (npHome) npHome.addEventListener('click', () => switchView('home'));
 
+    const npBackMobile = $('#np-mobile-back');
+    if (npBackMobile) npBackMobile.addEventListener('click', () => {
+      // Return to whichever view we were on before
+      switchView(state.previousView || 'home');
+    });
+
     // Favorites button in sidebar
     $('#btn-favorites')?.addEventListener('click', () => switchView('favorites'));
   }
 
   function switchView(view) {
+    if (state.currentView !== 'nowplaying') state.previousView = state.currentView;
     state.currentView = view;
+    
     $$('.view').forEach(v => v.classList.remove('active'));
     const el = $(`#view-${view}`);
     if (el) el.classList.add('active');
 
-    $$('.nav-btn').forEach(b => b.classList.remove('active'));
-    const navBtn = $(`.nav-btn[data-view="${view}"]`);
-    if (navBtn) navBtn.classList.add('active');
+    // Sync active states for both nav bars
+    $$('.nav-btn, .mobile-nav-btn').forEach(b => b.classList.remove('active'));
+    $$(`.nav-btn[data-view="${view}"], .mobile-nav-btn[data-view="${view}"]`).forEach(btn => {
+      btn.classList.add('active');
+    });
 
     const bar = $('#player-bar');
     if (view === 'nowplaying') bar.style.display = 'none';
@@ -2019,20 +2030,52 @@
 
   // ── Playlists / Library ───────────────────────────────────────
   function renderPlaylists() {
+    // 1. Desktop Sidebar
     const container = $('#playlists-container');
-    const existingPlaylists = container.querySelectorAll('.playlist-item:not(#btn-favorites)');
-    existingPlaylists.forEach(el => el.remove());
+    if (container) {
+      const existingPlaylists = container.querySelectorAll('.playlist-item:not(#btn-favorites)');
+      existingPlaylists.forEach(el => el.remove());
 
-    Object.keys(state.playlists).forEach(name => {
-      const btn = document.createElement('button');
-      btn.className = 'playlist-item';
-      btn.innerHTML = `
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
-        <span>${esc(name)}</span>
-        <span class="playlist-count">${state.playlists[name].length}</span>`;
-      btn.addEventListener('click', () => openPlaylistView(name));
-      container.appendChild(btn);
-    });
+      Object.keys(state.playlists).forEach(name => {
+        const btn = document.createElement('button');
+        btn.className = 'playlist-item';
+        btn.innerHTML = `
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+          <span>${esc(name)}</span>
+          <span class="playlist-count">${state.playlists[name].length}</span>`;
+        btn.addEventListener('click', () => openPlaylistView(name));
+        container.appendChild(btn);
+      });
+    }
+
+    // 2. Mobile Library Grid
+    const mobileContainer = $('#mobile-playlists-container');
+    if (mobileContainer) {
+      // Keep only the favorites card
+      const favCard = $('#btn-favorites-mobile');
+      mobileContainer.innerHTML = '';
+      if (favCard) mobileContainer.appendChild(favCard);
+
+      Object.keys(state.playlists).forEach(name => {
+        const card = document.createElement('div');
+        card.className = 'playlist-card-mobile';
+        card.innerHTML = `
+          <div class="playlist-card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+          </div>
+          <div class="playlist-card-info">
+            <div class="playlist-card-name">${esc(name)}</div>
+            <div class="playlist-card-count">${state.playlists[name].length} bài hát</div>
+          </div>`;
+        card.addEventListener('click', () => openPlaylistView(name));
+        mobileContainer.appendChild(card);
+      });
+    }
+
+    // Update counts
+    const n = state.favorites.length;
+    if ($('#fav-count')) $('#fav-count').textContent = n;
+    if ($('#fav-count-mobile')) $('#fav-count-mobile').textContent = `${n} bài hát`;
   }
 
   function setupModals() {
@@ -2043,7 +2086,7 @@
       if (e.target === overlay) overlay.style.display = 'none';
     });
 
-    $('#btn-create-playlist')?.addEventListener('click', () => {
+    const showCreatePlaylistModal = () => {
       content.innerHTML = `
         <h3>Tạo Playlist Mới</h3>
         <input type="text" id="new-playlist-name" placeholder="Tên playlist..." autofocus>
@@ -2067,6 +2110,17 @@
       $('#new-playlist-name').addEventListener('keydown', (e) => {
         if (e.key === 'Enter') $('#modal-create').click();
       });
+    };
+
+    $('#btn-create-playlist')?.addEventListener('click', showCreatePlaylistModal);
+    $('#btn-create-playlist-mobile')?.addEventListener('click', showCreatePlaylistModal);
+
+    // Mobile specific: Favorites card in Library
+    $('#btn-favorites-mobile')?.addEventListener('click', () => {
+      // On mobile, clicking the favorites card should probably just scroll down to the favorites list
+      // or we can keep the current behavior of showing all favorites in the same view.
+      // For now, let's just make it focus or highlight the favorites section.
+      $('#favorites-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
   }
 

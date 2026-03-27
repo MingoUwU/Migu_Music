@@ -999,3 +999,227 @@ img    { display: block; max-width: 100%; }
 /* ── Player Bar Spacing ───────────────────────────────────────── */
 .has-player .view { padding-bottom: 80px; }
 #view-nowplaying.active ~ .player-bar { display: none !important; }
+
+/* ── Mobile-only styles (Strict Isolation) ────────────────────── */
+.mobile-nav { display: none; }
+.mobile-back-btn { display: none; }
+
+@media (max-width: 768px) {
+  :root {
+    --sidebar-w: 0px;
+    --player-h: 68px;
+    --bottom-nav-h: 68px;
+  }
+
+  /* Hide Desktop Sidebar */
+  .sidebar { display: none !important; }
+
+  /* Adjust Main Content Area */
+  .main-content {
+    margin-left: 0 !important;
+    padding: 0 !important;
+    width: 100vw !important;
+  }
+
+  .view {
+    padding: 24px 16px 150px; /* Space for player bar + bottom nav */
+  }
+
+  /* Show Mobile Nav */
+  .mobile-nav {
+    display: flex;
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    height: var(--bottom-nav-h);
+    background: rgba(10, 10, 25, 0.96);
+    backdrop-filter: blur(30px) saturate(1.5);
+    -webkit-backdrop-filter: blur(30px) saturate(1.5);
+    border-top: 1px solid var(--glass-border);
+    z-index: 60;
+    justify-content: space-around;
+    align-items: center;
+    padding: 0 8px;
+    box-shadow: 0 -10px 40px rgba(0,0,0,0.5);
+  }
+
+  .mobile-nav-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    color: var(--text-secondary);
+    font-size: 10px;
+    font-weight: 500;
+    transition: all 0.25s var(--ease);
+    width: 25%;
+    opacity: 0.6;
+  }
+
+  .mobile-nav-btn svg { width: 22px; height: 22px; }
+  .mobile-nav-btn.active { color: var(--accent); opacity: 1; transform: translateY(-2px); }
+  .mobile-nav-btn.active svg { color: var(--accent); }
+
+  /* Player Bar on Mobile */
+  .player-bar {
+    left: 0 !important;
+    bottom: var(--bottom-nav-h) !important;
+    height: var(--player-h) !important;
+    border-top: 1px solid var(--glass-border);
+    background: rgba(15, 15, 35, 0.98);
+    box-shadow: 0 -5px 20px rgba(0,0,0,0.3);
+  }
+
+  .pb-content { padding: 0 12px; gap: 10px; }
+  .pb-right { display: none; } /* Hide volume slider and time on mobile bar to save space */
+  .pb-thumbnail { width: 44px; height: 44px; border-radius: 8px; }
+  .pb-title { font-size: 12px; }
+  .pb-artist { font-size: 10px; }
+  .pb-center { gap: 12px; }
+  .pb-ctrl svg { width: 16px; height: 16px; }
+
+  /* Now Playing Overlay (Full Screen) */
+  #view-nowplaying {
+    padding: 0;
+    z-index: 100;
+    background: #05050f;
+    overflow: hidden;
+  }
+
+  .nowplaying-layout {
+    flex-direction: column;
+    height: 100vh;
+    padding-bottom: 20px;
+  }
+
+  .np-left {
+    padding: 40px 24px;
+    justify-content: center;
+    flex: 1;
+  }
+
+  .np-right {
+    display: none; /* Discard queue/suggest on main mobile player view */
+  }
+
+  .visualizer-wrapper {
+    width: 300px; height: 300px;
+    max-width: 80vw; max-height: 80vw;
+    margin-bottom: 40px;
+  }
+
+  .np-info { margin-top: 0; margin-bottom: 30px; }
+  .np-title { font-size: 24px; line-height: 1.2; }
+  .np-artist { font-size: 16px; opacity: 0.7; }
+
+  .mobile-back-btn {
+    display: flex;
+    position: absolute;
+    top: 24px; left: 20px;
+    width: 44px; height: 44px;
+    align-items: center; justify-content: center;
+    background: rgba(255,255,255,0.08);
+    backdrop-filter: blur(10px);
+    border-radius: 50%;
+    z-index: 110;
+    color: white;
+    border: 1px solid rgba(255,255,255,0.1);
+  }
+
+  /* Room View Mobile Redesign */
+  #room-setup-panel > div {
+    flex-direction: column !important;
+    height: auto !important;
+    gap: 20px !important;
+  }
+  
+  #room-active-panel {
+    flex-direction: column !important;
+    height: auto !important;
+    padding-bottom: 160px;
+  }
+
+  .room-left { width: 100% !important; flex: none !important; }
+  .room-right { width: 100% !important; height: 450px; border-left: none !important; border-top: 1px solid var(--border); }
+  .room-info-card { padding: 16px !important; }
+  .room-np-card { padding: 12px !important; gap: 12px !important; }
+
+  /* Feed / Grid layouts */
+  .trending-grid, .favorites-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+
+  .quick-actions { flex-direction: column; gap: 10px; }
+  .quick-action-card { max-width: none; width: 100%; padding: 20px; }
+  
+  .view-header h2 { font-size: 26px; }
+
+  /* Mobile Library / Playlists */
+  .mobile-only { display: flex !important; }
+  
+  .mobile-playlists-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-top: 15px;
+  }
+
+  .playlist-card-mobile {
+    background: var(--glass);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--r-md);
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    transition: all 0.2s var(--ease);
+  }
+
+  .playlist-card-mobile:active {
+    transform: scale(0.95);
+    background: var(--glass-active);
+  }
+
+  .playlist-card-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #6366f1, #a855f7);
+    box-shadow: 0 4px 15px rgba(168, 85, 247, 0.3);
+  }
+
+  .playlist-card-icon svg {
+    width: 22px;
+    height: 22px;
+    color: white;
+  }
+
+  .playlist-card-icon.fav {
+    background: linear-gradient(135deg, #f43f5e, #fb7185);
+    box-shadow: 0 4px 15px rgba(244, 63, 94, 0.3);
+  }
+
+  .playlist-card-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .playlist-card-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .playlist-card-count {
+    font-size: 11px;
+    color: var(--text-secondary);
+    opacity: 0.7;
+  }
+}
