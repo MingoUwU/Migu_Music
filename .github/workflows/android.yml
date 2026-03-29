@@ -22,7 +22,9 @@ jobs:
         run: npm install
 
       - name: Sync Assets to Android
-        run: cp -r public/* android/app/src/main/assets/public/
+        run: |
+          mkdir -p android/app/src/main/assets/public
+          cp -r public/* android/app/src/main/assets/public/
 
       - name: Setup Java
         uses: actions/setup-java@v4
