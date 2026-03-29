@@ -1,0 +1,9 @@
+{
+  "appId": "com.migu.music",
+  "appName": "MiGu Music",
+  "webDir": "public",
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true
+  }
+}
