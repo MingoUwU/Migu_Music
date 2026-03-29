@@ -49,7 +49,12 @@
   const audio = $('#audio-player');
 
   // URL Detection for Mobile/PC (Isolate Mobile from PC)
-  const BASE_URL = (window.innerWidth <= 768 && !window.electronAPI) 
+  const isMobile = (window.innerWidth <= 800) || 
+                   (window.location.protocol === 'file:') || 
+                   (typeof window.Capacitor !== 'undefined') ||
+                   /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+  const BASE_URL = (isMobile && !window.electronAPI) 
     ? 'https://migu-music.onrender.com' 
     : '';
 

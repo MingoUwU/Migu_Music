@@ -3,13 +3,18 @@ FROM node:22-bookworm-slim
 
 WORKDIR /app
 
-# Install system dependencies for node-gyp and others if needed
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     python3 \
+    python3-pip \
+    ffmpeg \
     make \
     g++ \
     curl \
     && rm -rf /var/lib/apt/lists/*
+
+# Install yt-dlp
+RUN pip3 install yt-dlp --break-system-packages --no-cache-dir
 
 # Copy package files first for better caching
 COPY package*.json ./
