@@ -28,5 +28,5 @@ ENV PORT=3000
 # Expose the internal server port
 EXPOSE 3000
 
-# Start the application
-CMD ["npm", "start"]
+# Start the application as a web server (Headless)
+CMD ["npm", "run", "server"]
