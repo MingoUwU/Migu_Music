@@ -385,14 +385,14 @@
     }
 
     container.innerHTML = filtered.map(r => `
-      <div class="lobby-room-item" style="background: var(--surface); padding: 12px; border-radius: 8px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; border: 1px solid var(--border); transition: all 0.2s;" onclick="joinRoomFromLobby('${r.roomId}')" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
-        <div>
-          <div style="font-weight: 600; font-size: 15px;">${esc(r.name)}</div>
-          <div style="font-size: 12px; color: var(--accent); margin-top: 6px;"><i class="fas fa-tag"></i> ${esc(r.tags) || 'Không có tag'}</div>
+      <div class="lobby-room-card" onclick="joinRoomFromLobby('${r.roomId}')">
+        <div class="room-card-main">
+          <div class="room-card-title">${esc(r.name)}</div>
+          <div class="room-card-tags"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;margin-right:4px;vertical-align:middle;"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg> ${esc(r.tags) || 'Không có tag'}</div>
         </div>
-        <div style="font-size: 13px; opacity: 0.8; text-align: right;">
-          <div style="margin-bottom: 4px;"><i class="fas fa-users"></i> ${r.usersCount || 1}</div>
-          <div style="font-family: monospace; font-size: 12px; background: rgba(0,0,0,0.2); padding: 2px 6px; border-radius: 4px;">Mã: ${r.roomId}</div>
+        <div class="room-card-right" style="text-align:right;">
+          <div class="room-card-meta" style="margin-bottom:4px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;margin-right:4px;vertical-align:middle;"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> ${r.usersCount || 1}</div>
+          <div class="room-card-meta" style="font-family:monospace; opacity:0.6;">Mã: ${r.roomId}</div>
         </div>
       </div>
     `).join('');
@@ -692,22 +692,7 @@
     const box = $('#room-chat-messages');
     if (!box) return;
     const el = document.createElement('div');
-    el.style.padding = '8px 12px';
-    el.style.borderRadius = '16px';
-    el.style.maxWidth = '85%';
-    el.style.fontSize = '14px';
-    el.style.lineHeight = '1.4';
-    if (isSelf) {
-      el.style.alignSelf = 'flex-end';
-      el.style.background = 'var(--accent)';
-      el.style.color = 'white';
-      el.style.borderBottomRightRadius = '4px';
-    } else {
-      el.style.alignSelf = 'flex-start';
-      el.style.background = 'rgba(255,255,255,0.1)';
-      el.style.color = 'white';
-      el.style.borderBottomLeftRadius = '4px';
-    }
+    el.className = 'chat-bubble' + (isSelf ? ' self' : '');
     el.textContent = text;
     box.appendChild(el);
     box.scrollTop = box.scrollHeight;

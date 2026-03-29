@@ -189,15 +189,18 @@ async function youtubeSearch(query, retries = INNERTUBE_CLIENTS.length) {
 
   let res;
   try {
+    log(`[MiGu] Sending search request (Client: ${client.clientName}, Query: "${query}")`);
     res = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'User-Agent': client.userAgent
       },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      timeout: 10000 // 10 second timeout
     });
   } catch (e) {
+    log(`[MiGu] Search Fetch Error (${client.clientName}): ${e.message}`, 'ERROR');
     if (retries > 1) { rotateClient(); return youtubeSearch(query, retries - 1); }
     throw e;
   }
@@ -248,13 +251,20 @@ async function youtubeSearch(query, retries = INNERTUBE_CLIENTS.length) {
 // ── YouTube Search Suggestions ───────────────────────────────────
 async function youtubeSuggestions(query) {
   const url = `https://suggestqueries-clients6.youtube.com/complete/search?client=youtube&q=${encodeURIComponent(query)}&ds=yt`;
-  const res = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
-  });
-  const text = await res.text();
-  const jsonStr = text.replace(/^[^(]*\(/, '').replace(/\)$/, '');
-  const data = JSON.parse(jsonStr);
-  return (data[1] || []).map(item => item[0]);
+  log(`[MiGu] Fetching suggestions for: "${query}"`);
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      timeout: 5000 // 5 second timeout
+    });
+    const text = await res.text();
+    const jsonStr = text.replace(/^[^(]*\(/, '').replace(/\)$/, '');
+    const data = JSON.parse(jsonStr);
+    return (data[1] || []).map(item => item[0]);
+  } catch (e) {
+    log(`[MiGu] Suggestions failed: ${e.message}`, 'WARN');
+    return [];
+  }
 }
 
 // ── Cache for stream URLs ────────────────────────────────────────
@@ -537,18 +547,38 @@ app.get('/api/suggest', async (req, res) => {
 // ── API: Trending Music ──────────────────────────────────────────
 app.get('/api/trending', async (req, res) => {
   try {
-    // Use search-based approach for reliable trending content
     const queries = [
-      'nhạc chill vietnam 2026',
-      'MV mới ra mắt',
-      'top hits vietnam'
+      'nhạc trẻ remix 2026',
+      'top hits vietnam 2026',
+      'nhạc chill tiktok 2026',
+      'trending music vietnam'
     ];
-    const query = queries[Math.floor(Math.random() * queries.length)];
-    const results = await youtubeSearch(query);
-    res.json({ results: results.slice(0, 12) });
+    
+    // Shuffle queries to get variety
+    const shuffled = queries.sort(() => 0.5 - Math.random());
+    let results = [];
+    let usedQuery = '';
+
+    for (const query of shuffled) {
+      log(`[MiGu] Fetching trending with query: "${query}"`);
+      results = await youtubeSearch(query);
+      if (results && results.length > 0) {
+        usedQuery = query;
+        break;
+      }
+      log(`[MiGu] Query "${query}" returned 0 results, trying next...`, 'WARN');
+    }
+
+    if (results.length === 0) {
+      log('[MiGu] All trending queries failed to return results', 'ERROR');
+    } else {
+      log(`[MiGu] Trending loaded: ${results.length} songs (Query: "${usedQuery}")`);
+    }
+
+    res.json({ results: results.slice(0, 15) });
   } catch (err) {
-    log('[MiGu] Trending error: ' + err.message, 'ERROR');
-    res.status(500).json({ error: 'Failed to get trending.' });
+    log('[MiGu] Trending API Error: ' + err.message, 'ERROR');
+    res.status(500).json({ error: 'Failed to get trending music.' });
   }
 });
 
