@@ -48,6 +48,11 @@
   const $$ = (sel) => document.querySelectorAll(sel);
   const audio = $('#audio-player');
 
+  // URL Detection for Mobile/PC (Isolate Mobile from PC)
+  const BASE_URL = (window.innerWidth <= 768 && !window.electronAPI) 
+    ? 'https://migu-music.onrender.com' 
+    : '';
+
   const SVG = {
     play: '<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6 3 20 12 6 21 6 3"/></svg>',
     pause: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>',
@@ -115,7 +120,7 @@
   // ── Init ──────────────────────────────────────────────────────
   async function checkServer() {
     try {
-      const res = await fetch('/api/health');
+      const res = await fetch(BASE_URL + '/api/health');
       const data = await res.json();
       if (data.status === 'ok') {
         if (!data.ytDlp) {
@@ -168,7 +173,7 @@
         const song = state.queue[state.currentIndex];
         state.currentSongInfo = song;
         updateUI(song);
-        audio.src = `/api/stream/${song.videoId}`;
+        audio.src = BASE_URL + `/api/stream/${song.videoId}`;
         audio.load();
         showBar(true);
       }
@@ -596,7 +601,7 @@
         showBar(true);
         
         try {
-          audio.src = '/api/stream/' + update.currentSong.videoId;
+          audio.src = BASE_URL + '/api/stream/' + update.currentSong.videoId;
           audio.load();
           
           // Ensure we jump to time ONLY after metadata is ready
@@ -873,7 +878,7 @@
 
       state.searchDebounce = setTimeout(async () => {
         try {
-          const res = await fetch(`/api/suggest?q=${encodeURIComponent(q)}`);
+          const res = await fetch(BASE_URL + `/api/suggest?q=${encodeURIComponent(q)}`);
           const items = await res.json();
           if (items.length > 0) {
             sugBox.innerHTML = items.slice(0, 6).map(s =>
@@ -922,7 +927,7 @@
     results.innerHTML = '<div class="loading-spinner"><div class="spinner"></div></div>';
 
     try {
-      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+      const res = await fetch(BASE_URL + `/api/search?q=${encodeURIComponent(q)}`);
       const data = await res.json();
       if (!data.results || data.results.length === 0) {
         results.innerHTML = '<div class="empty-state"><p>Không tìm thấy kết quả</p></div>';
@@ -939,7 +944,7 @@
       </div>`;
       $('#btn-rotate-client')?.addEventListener('click', async () => {
         try {
-          const r = await fetch('/api/rotate-client', { method: 'POST' });
+          const r = await fetch(BASE_URL + '/api/rotate-client', { method: 'POST' });
           const d = await r.json();
           toast(`Đã đổi sang server: ${d.client}`, 'success');
           performSearch(q);
@@ -1072,7 +1077,7 @@
     try {
       // 1. Fetch playlist items (first 15)
       // Pass startVideoId as 'v' param for Mix context
-      const res = await fetch(`/api/playlist-info/${playlistId}${startVideoId ? '?v=' + startVideoId : ''}`);
+      const res = await fetch(BASE_URL + `/api/playlist-info/${playlistId}${startVideoId ? '?v=' + startVideoId : ''}`);
       const data = await res.json();
       if (data.error || !data.items || data.items.length === 0) {
         throw new Error(data.error || 'Playlist trống hoặc không hợp lệ');
@@ -1133,7 +1138,7 @@
     switchView('nowplaying');
 
     try {
-      audio.src = `/api/stream/${encodeURIComponent(song.videoId)}`;
+      audio.src = BASE_URL + `/api/stream/${encodeURIComponent(song.videoId)}`;
       if (isRoomHost) emitRoomState(); 
       audio.load();
       await audio.play();
@@ -1675,7 +1680,7 @@
       toast('Lỗi phát nhạc. Đang thử lại...', 'error');
       setTimeout(() => {
         if (state.currentSongInfo) {
-          audio.src = `/api/stream/${state.currentSongInfo.videoId}?t=${Date.now()}`;
+          audio.src = BASE_URL + `/api/stream/${state.currentSongInfo.videoId}?t=${Date.now()}`;
           audio.load();
           audio.play().then(() => { state.isPlaying = true; updatePlayBtns(true); }).catch(() => { });
         }
@@ -1923,7 +1928,7 @@
     container.innerHTML = '<div class="loading-spinner"><div class="spinner"></div></div>';
 
     try {
-      const res = await fetch(`/api/info/${videoId}`);
+      const res = await fetch(BASE_URL + `/api/info/${videoId}`);
       const data = await res.json();
       const recs = data.recommendedVideos || [];
 
@@ -1966,7 +1971,7 @@
     const container = $('#trending-container');
     container.innerHTML = '<div class="loading-spinner" style="grid-column: 1 / -1; padding: 80px 0;"><div class="spinner"></div></div>';
     try {
-      const res = await fetch('/api/trending');
+      const res = await fetch(BASE_URL + '/api/trending');
       const data = await res.json();
 
       if (!data.results || data.results.length === 0) {
