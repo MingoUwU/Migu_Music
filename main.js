@@ -45,7 +45,7 @@ ipcMain.on('update-rpc', (event, data) => {
 
 // ── Memory Optimization cho máy 8GB RAM ────────────────────────
 app.commandLine.appendSwitch('renderer-process-limit', '1'); // Giới hạn chỉ mở 1 process cho giao diện
-app.commandLine.appendSwitch('js-flags', '--max-old-space-size=256'); // Ép V8 Engine dọn rác sớm, không ngốn RAM
+app.commandLine.appendSwitch('js-flags', '--max-old-space-size=512'); // Cân bằng RAM/CPU, tránh GC quá dày gây tốn CPU
 app.commandLine.appendSwitch('disable-site-isolation-trials'); // Giảm Overhead RAM của Chromium
 // ───────────────────────────────────────────────────────────────
 

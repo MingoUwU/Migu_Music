@@ -22,6 +22,12 @@
     currentSongInfo: null,
     roomQueue: [],
     activeQueueTab: 'personal',
+    listeningHistory: [],
+    activeListenSession: null,
+    lowPerformanceMode: false,
+    superSaverMode: false,
+    mixTransitionSeconds: 0,
+    lastVisualizerFrameAt: 0,
   };
 
   let socket = null;
@@ -29,6 +35,7 @@
   let isRoomHost = false;
   let isProcessingRoomSync = false;
   let syncHeartbeat = null;
+  let myRoomJoinedAt = Date.now();
 
   const SUPABASE_URL = 'https://jhuqonoldshtxsquurho.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_ANl0zKdVePo8bAE_B8qKWA_bZOV5BvL';
@@ -130,8 +137,10 @@
   }
 
   function init() {
+    detectPerformanceMode();
     checkServer();
     loadState();
+    setupPerformanceToggle();
     setupParticles();
     setupNavigation();
     setupSearch();
@@ -146,6 +155,7 @@
     setupRoom(); // Initialize socket
     setupVisualizer(); // Initialize Web Audio API
     loadTrending();
+    loadPersonalizedRecommendations();
     renderPlaylists();
     setGreeting();
     audio.volume = state.volume / 100;
@@ -175,6 +185,92 @@
     }
   }
 
+  function detectPerformanceMode() {
+    const memory = Number(navigator.deviceMemory || 8);
+    const cores = Number(navigator.hardwareConcurrency || 4);
+    state.lowPerformanceMode = (memory <= 8) || (cores <= 4);
+
+    if (state.lowPerformanceMode) {
+      console.log(`[MiGu] Low performance mode ON (RAM:${memory}GB, CPU cores:${cores})`);
+    }
+  }
+
+  function isSuperMode() {
+    return !!state.superSaverMode;
+  }
+
+  function setupPerformanceToggle() {
+    const btn = $('#btn-super-mode');
+    const mixBtn = $('#btn-mix-mode');
+    if (!btn) return;
+
+    const refreshMixLabel = () => {
+      if (!mixBtn) return;
+      const sec = Number(state.mixTransitionSeconds || 0);
+      const superOn = isSuperMode();
+      mixBtn.classList.toggle('disabled', superOn);
+      mixBtn.disabled = superOn;
+      mixBtn.textContent = superOn
+        ? '🎚 Mix chuyển bài: OFF (Super mode)'
+        : (sec > 0 ? `🎚 Mix chuyển bài: ON (${sec}s)` : '🎚 Mix chuyển bài: OFF');
+    };
+
+    const refreshLabel = () => {
+      const on = isSuperMode();
+      btn.classList.toggle('on', on);
+      btn.textContent = on ? '⚡ Super tiết kiệm: ON' : '⚡ Super tiết kiệm: OFF';
+      refreshMixLabel();
+    };
+
+    refreshLabel();
+    if (mixBtn) {
+      mixBtn.addEventListener('click', () => {
+        if (isSuperMode()) return;
+        const cycle = [0, 2, 4];
+        const idx = cycle.indexOf(Number(state.mixTransitionSeconds || 0));
+        state.mixTransitionSeconds = cycle[(idx + 1) % cycle.length];
+        saveState();
+        refreshMixLabel();
+        toast(
+          state.mixTransitionSeconds > 0
+            ? `Bật mix chuyển bài ${state.mixTransitionSeconds}s`
+            : 'Đã tắt mix chuyển bài',
+          'info'
+        );
+      });
+    }
+    btn.addEventListener('click', () => {
+      state.superSaverMode = !state.superSaverMode;
+      saveState();
+      refreshLabel();
+      setupParticles();
+
+      // Reset UI elements impacted by super mode
+      const suggest = $('#suggest-container');
+      if (suggest && state.superSaverMode) {
+        suggest.innerHTML = '<div class="empty-state small"><p>Đã tắt gợi ý để tiết kiệm hiệu năng</p></div>';
+      }
+      const rec = $('#recommended-container');
+      if (rec && state.superSaverMode) {
+        rec.innerHTML = '<div class="empty-state small" style="grid-column: 1 / -1;"><p>Super mode: tắt gợi ý cá nhân</p></div>';
+      }
+
+      toast(state.superSaverMode ? 'Đã bật Super tiết kiệm' : 'Đã tắt Super tiết kiệm', 'info');
+      if (state.superSaverMode && state.currentView === 'nowplaying') {
+        switchView('home');
+      }
+      if (syncHeartbeat) {
+        clearInterval(syncHeartbeat);
+        syncHeartbeat = setInterval(() => {
+          if (isRoomHost && roomChannel && roomCode) emitRoomState();
+        }, state.superSaverMode ? 7000 : 3000);
+      }
+      if (!state.superSaverMode) {
+        loadPersonalizedRecommendations();
+      }
+    });
+  }
+
   // ── Persistence ───────────────────────────────────────────────
   function loadState() {
     try {
@@ -188,8 +284,38 @@
         state.currentIndex = d.currentIndex ?? -1;
         state.repeat = d.repeat || 'off';
         state.shuffle = d.shuffle || false;
+        state.listeningHistory = Array.isArray(d.listeningHistory) ? d.listeningHistory.slice(-120) : [];
+        state.superSaverMode = !!d.superSaverMode;
+        state.mixTransitionSeconds = Number(d.mixTransitionSeconds || 0);
       }
     } catch (e) { /* silent */ }
+  }
+
+  function seedHistoryFromQueueIfNeeded() {
+    if (state.listeningHistory.length >= 3) return;
+    const source = (state.queue || []).slice(-15);
+    if (!source.length) return;
+    const existing = new Set(state.listeningHistory.map(h => h.videoId));
+    const seeded = [];
+
+    for (const s of source) {
+      if (!s || !s.videoId || existing.has(s.videoId)) continue;
+      seeded.push({
+        videoId: s.videoId,
+        title: s.title || '',
+        author: s.author || '',
+        listenRatio: 0.55,
+        skippedEarly: false,
+        liked: state.favorites.some(f => f.videoId === s.videoId),
+        timestamp: Date.now() - 3600000
+      });
+      existing.add(s.videoId);
+    }
+
+    if (seeded.length) {
+      state.listeningHistory = [...state.listeningHistory, ...seeded].slice(-150);
+      saveState();
+    }
   }
 
   function saveState() {
@@ -202,8 +328,35 @@
         currentIndex: state.currentIndex,
         repeat: state.repeat,
         shuffle: state.shuffle,
+        listeningHistory: state.listeningHistory.slice(-120),
+        superSaverMode: state.superSaverMode,
+        mixTransitionSeconds: state.mixTransitionSeconds,
       }));
     } catch (e) { /* silent */ }
+  }
+
+  function recordListeningSnapshot(song, ended = false) {
+    if (!song || !song.videoId) return;
+    const duration = Number(song.duration || audio.duration || 0);
+    const listenedSec = Number(audio.currentTime || 0);
+    const listenRatio = duration > 0 ? Math.max(0, Math.min(1, listenedSec / duration)) : 0;
+    const skippedEarly = !ended && listenedSec > 0 && listenedSec < 25;
+    const liked = state.favorites.some(f => f.videoId === song.videoId);
+
+    state.listeningHistory.push({
+      videoId: song.videoId,
+      title: song.title || '',
+      author: song.author || '',
+      listenRatio: Number(listenRatio.toFixed(3)),
+      skippedEarly,
+      liked,
+      timestamp: Date.now()
+    });
+
+    if (state.listeningHistory.length > 150) {
+      state.listeningHistory = state.listeningHistory.slice(-150);
+    }
+    saveState();
   }
 
   // ── Room (Supabase Listen Together) ──────────────────────────────────
@@ -434,6 +587,7 @@
     }
 
     roomCode = code.toUpperCase();
+    myRoomJoinedAt = Date.now();
     isProcessingRoomSync = true;
     window.targetSyncTime = null; // Clear any old sync time
 
@@ -442,7 +596,7 @@
       if (isRoomHost && roomChannel && roomCode) {
         emitRoomState();
       }
-    }, 3000);
+    }, isSuperMode() ? 7000 : 3000);
 
     roomChannel = supabase.channel(`room:${roomCode}`, {
       config: { presence: { key: myUserId } }
@@ -465,14 +619,20 @@
         if (el) el.textContent = users.length;
 
 
-        // Host Election: earliest joined_at
+        // Host Election: stable earliest joined_at
         let hostId = null;
-        let earliest = Infinity;
+        let earliest = Number.POSITIVE_INFINITY;
         for (const [key, presences] of Object.entries(presence)) {
-          if (presences[0] && presences[0].joined_at < earliest) {
-            earliest = presences[0].joined_at;
+          const joinedAt = Number(presences?.[0]?.joined_at);
+          if (!Number.isFinite(joinedAt)) continue;
+          if (joinedAt < earliest) {
+            earliest = joinedAt;
             hostId = key;
           }
+        }
+        if (!hostId) {
+          const keys = Object.keys(presence).sort();
+          hostId = keys[0] || null;
         }
 
         const wasHost = isRoomHost;
@@ -489,11 +649,6 @@
             window.currentRoomMetadata = { name: 'Phòng ' + roomCode, tags: '' };
           }
           const meta = window.currentRoomMetadata || {};
-          // Track joined_at for host election
-          roomChannel.track({
-            joined_at: earliest
-          }).catch(() => {});
-
           if (globalLobbyChannel) {
             globalLobbyChannel.track({
               roomId: roomCode,
@@ -547,7 +702,7 @@
 
           const metadata = window.currentRoomMetadata || {};
           await roomChannel.track({
-            joined_at: Date.now()
+            joined_at: myRoomJoinedAt
           });
 
           // Request initial sync from host
@@ -807,7 +962,14 @@
   function setupParticles() {
     const c = $('#particles');
     if (!c) return;
-    for (let i = 0; i < 25; i++) {
+    c.innerHTML = '';
+    if (isSuperMode()) {
+      c.style.display = 'none';
+      return;
+    }
+    c.style.display = '';
+    const particleCount = state.lowPerformanceMode ? 8 : 25;
+    for (let i = 0; i < particleCount; i++) {
       const p = document.createElement('div');
       p.className = 'particle';
       p.style.left = Math.random() * 100 + '%';
@@ -859,6 +1021,7 @@
 
     if (view === 'search') setTimeout(() => $('#search-input')?.focus(), 100);
     if (view === 'favorites') renderFavoritesList();
+    if (view === 'home' && !isSuperMode()) loadPersonalizedRecommendations();
 
     resetIdle();
   }
@@ -870,6 +1033,11 @@
     const sugBox = $('#suggestions-container');
 
     input.addEventListener('input', () => {
+      if (isSuperMode()) {
+        clear.style.display = input.value.trim() ? '' : 'none';
+        sugBox.style.display = 'none';
+        return;
+      }
       const q = input.value.trim();
       clear.style.display = q ? '' : 'none';
       clearTimeout(state.searchDebounce);
@@ -1124,6 +1292,11 @@
       return;
     }
 
+    const previousSong = state.currentSongInfo;
+    if (previousSong && previousSong.videoId !== song.videoId) {
+      recordListeningSnapshot(previousSong, false);
+    }
+
     if (addQ) {
       const q = (roomCode && isRoomHost) ? state.roomQueue : state.queue;
       const idx = q.findIndex(q => q.videoId === song.videoId);
@@ -1145,6 +1318,7 @@
       updatePlayBtns(true);
       $('#np-disc')?.classList.add('spinning');
       loadRecommendations(song.videoId);
+      loadPersonalizedRecommendations();
       if (isRoomHost) emitRoomState(); 
     } catch (err) {
       console.error('Play error:', err);
@@ -1215,6 +1389,7 @@
   }
 
   function updateDynamicBackdrop(url) {
+    if (state.lowPerformanceMode || isSuperMode()) return;
     const img = new Image();
     img.crossOrigin = "Anonymous";
     img.src = url;
@@ -1279,16 +1454,10 @@
     if (pbFav) { pbFav.classList.toggle('is-fav', isFav); if (isFav) pbFav.querySelector('svg')?.setAttribute('fill', 'var(--accent)'); else pbFav.querySelector('svg')?.setAttribute('fill', 'none'); }
   }
 
-  // ── Visualizer ────────────────────────────────────────────────
+  // ── Visualizer (2D only) ─────────────────────────────────────
   let audioCtx = null;
   let analyser = null;
   let source = null;
-
-  // Three.js Galaxy Variables
-  let gScene, gCamera, gRenderer, gParticles, gGeometry, gMaterial, gCore;
-  const starCount = 2800; // Even more stars!
-  let mouseX = 0, mouseY = 0;
-  let pulseIntensity = 0;
 
   function setupVisualizer() {
     const canvas = $('#np-visualizer');
@@ -1306,7 +1475,6 @@
       analyser.connect(audioCtx.destination);
       analyser.fftSize = 128;
 
-      if (state.visualizerMode === '3d') initGalaxy();
       drawVisualizer();
       window.removeEventListener('click', initCtx);
       window.removeEventListener('keydown', initCtx);
@@ -1315,40 +1483,19 @@
     window.addEventListener('click', initCtx);
     window.addEventListener('keydown', initCtx);
 
-    // Mouse movement for galaxy tilt
-    window.addEventListener('mousemove', (e) => {
-      const rect = $('#view-nowplaying')?.getBoundingClientRect();
-      if (rect) {
-        mouseX = (e.clientX - (rect.left + rect.width / 2)) / (rect.width / 2);
-        mouseY = (e.clientY - (rect.top + rect.height / 2)) / (rect.height / 2);
-      }
-    });
-
-    $('#np-btn-menu')?.addEventListener('click', () => toggleVisualizerMode());
-
-    // Initial UI state
-    if (state.visualizerMode === '3d') {
-      const container = $('.np-artwork-container');
-      if (container) {
-        container.style.opacity = '0';
-        container.style.transform = 'scale(0.8)';
-        container.style.pointerEvents = 'none';
-      }
-      $('#galaxy-container').style.display = 'block';
-    }
-
     function drawVisualizer() {
       if (!analyser) return;
       requestAnimationFrame(drawVisualizer);
+      if (isSuperMode()) return;
 
-      // Only render if we are in Now Playing view AND it is visible
-      const galaxy = $('#galaxy-container');
-      if (state.currentView !== 'nowplaying' || !galaxy || galaxy.offsetWidth === 0) return;
-
-      if (state.visualizerMode === '3d') {
-        updateGalaxy();
-        return;
+      if (state.lowPerformanceMode) {
+        const now = Date.now();
+        if (now - state.lastVisualizerFrameAt < 66) return; // ~15 FPS
+        state.lastVisualizerFrameAt = now;
       }
+
+      if (state.currentView !== 'nowplaying') return;
+      if (state.lowPerformanceMode && !state.isPlaying) return;
 
       const bufferLength = analyser.frequencyBinCount;
       const dataArray = new Uint8Array(bufferLength);
@@ -1381,203 +1528,94 @@
     }
   }
 
-  function initGalaxy() {
-    if (gRenderer) return;
-    const container = $('#galaxy-container');
-    const w = container.offsetWidth || 500;
-    const h = container.offsetHeight || 500;
-
-    gScene = new THREE.Scene();
-    gCamera = new THREE.PerspectiveCamera(60, w / h, 0.1, 1000);
-    gCamera.position.z = 6;
-
-    gRenderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
-    gRenderer.setPixelRatio(window.devicePixelRatio);
-    gRenderer.setSize(w, h);
-    container.appendChild(gRenderer.domElement);
-
-    // Create a circular glow texture
-    const canvas = document.createElement('canvas');
-    canvas.width = 64; canvas.height = 64;
-    const ctx = canvas.getContext('2d');
-    const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-    grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
-    grad.addColorStop(0.3, 'rgba(255, 255, 255, 0.9)');
-    grad.addColorStop(0.6, 'rgba(255, 255, 255, 0.2)');
-    grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, 64, 64);
-    const texture = new THREE.CanvasTexture(canvas);
-
-    gGeometry = new THREE.BufferGeometry();
-    const positions = new Float32Array(starCount * 3);
-    const colors = new Float32Array(starCount * 3);
-    const scales = new Float32Array(starCount);
-
-    const spiralArms = 3;
-    const armTightness = 0.5;
-
-    for (let i = 0; i < starCount; i++) {
-      const i3 = i * 3;
-      const radius = Math.random() * 5;
-      const spinAngle = radius * armTightness;
-      const branchAngle = (i % spiralArms) / spiralArms * Math.PI * 2;
-
-      const randomX = (Math.pow(Math.random(), 3) * (Math.random() < 0.5 ? 1 : -1) * 0.3) * radius;
-      const randomY = (Math.pow(Math.random(), 3) * (Math.random() < 0.5 ? 1 : -1) * 0.3) * radius;
-      const randomZ = (Math.pow(Math.random(), 3) * (Math.random() < 0.5 ? 1 : -1) * 0.3) * radius;
-
-      positions[i3] = Math.cos(branchAngle + spinAngle) * radius + randomX;
-      positions[i3 + 1] = randomY * 0.5;
-      positions[i3 + 2] = Math.sin(branchAngle + spinAngle) * radius + randomZ;
-
-      const mixedColor = new THREE.Color();
-      const colorInside = new THREE.Color('#ff0099');
-      const colorOutside = new THREE.Color('#00ccff');
-      mixedColor.lerpColors(colorInside, colorOutside, radius / 5);
-
-      colors[i3] = mixedColor.r;
-      colors[i3 + 1] = mixedColor.g;
-      colors[i3 + 2] = mixedColor.b;
-
-      scales[i] = Math.random();
-    }
-
-    gGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    gGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-
-    gMaterial = new THREE.PointsMaterial({
-      size: 0.18,
-      sizeAttenuation: true,
-      vertexColors: true,
-      transparent: true,
-      map: texture,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      opacity: 1
-    });
-
-    gParticles = new THREE.Points(gGeometry, gMaterial);
-    gScene.add(gParticles);
-
-    // Create a BRIGHTER center star
-    const coreGeom = new THREE.BufferGeometry();
-    coreGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array([0, 0, 0]), 3));
-    const coreMat = new THREE.PointsMaterial({
-      size: 3.5, // Even bigger
-      map: texture,
-      transparent: true,
-      blending: THREE.AdditiveBlending,
-      color: 0xffffff,
-      depthWrite: false,
-      opacity: 1
-    });
-    gCore = new THREE.Points(coreGeom, coreMat);
-    gScene.add(gCore);
-
-    // Robust Resize handling using ResizeObserver
-    const ro = new ResizeObserver(() => {
-      const w = container.offsetWidth || 500;
-      const h = container.offsetHeight || 500;
-      if (w > 0 && h > 0) {
-        gRenderer.setSize(w, h);
-        gCamera.aspect = w / h;
-        gCamera.updateProjectionMatrix();
-        console.log('[MiGu] 3D Visualizer Adaptive Resize:', w, 'x', h);
-      }
-    });
-    ro.observe(container);
-  }
-
-  function updateGalaxy() {
-    if (!analyser || !gParticles) return;
-    const dataArray = new Uint8Array(analyser.frequencyBinCount);
-    analyser.getByteFrequencyData(dataArray);
-
-    let average = 0;
-    for (let i = 0; i < 16; i++) average += dataArray[i]; // Bass
-    average /= 16;
-
-    // Bass Detection for "Supernova" Pulse
-    if (average > 210) pulseIntensity = 1.0;
-    else pulseIntensity *= 0.92; // Decay
-
-    const lerpPulse = (average / 255);
-    const targetScale = (1 + lerpPulse * 0.8) + pulseIntensity * 0.6;
-
-    gParticles.scale.set(
-      THREE.MathUtils.lerp(gParticles.scale.x, targetScale, 0.1),
-      THREE.MathUtils.lerp(gParticles.scale.y, targetScale, 0.1),
-      THREE.MathUtils.lerp(gParticles.scale.z, targetScale, 0.1)
-    );
-
-    // Dynamic Core Pulse & Color
-    if (gCore) {
-      gCore.material.size = 3.5 + pulseIntensity * 5; // Surge more!
-      gCore.material.opacity = 1;
-
-      // Lerp color between Pink and Cyan
-      const c1 = new THREE.Color('#ff0099');
-      const c2 = new THREE.Color('#00ccff');
-      gCore.material.color.lerpColors(c1, c2, 0.5 + (Math.sin(Date.now() * 0.002) * 0.5));
-
-      // More dramatic flash
-      if (pulseIntensity > 0.7) gCore.material.color.set('#ffffff');
-    }
-
-    // Interaction & Rotation
-    gParticles.rotation.y += 0.003 + lerpPulse * 0.02 + pulseIntensity * 0.05;
-
-    // Mouse Gravity Tilt
-    const targetRotX = 0.5 + lerpPulse * 0.3 + (mouseY * 0.4);
-    const targetRotY = (mouseX * 0.4);
-
-    gParticles.rotation.x = THREE.MathUtils.lerp(gParticles.rotation.x, targetRotX, 0.05);
-    gParticles.rotation.z = THREE.MathUtils.lerp(gParticles.rotation.z, targetRotY, 0.05);
-
-    gRenderer.render(gScene, gCamera);
-  }
-
-  function toggleVisualizerMode() {
-    state.visualizerMode = state.visualizerMode === '2d' ? '3d' : '2d';
-    localStorage.setItem('migu-vmode', state.visualizerMode);
-
-    const disc = $('#np-disc');
-    const galaxy = $('#galaxy-container');
-    const container = $('.np-artwork-container');
-
-    if (state.visualizerMode === '3d') {
-      if (container) {
-        container.style.opacity = '0';
-        container.style.transform = 'scale(0.8)';
-      }
-      setTimeout(() => {
-        if (disc) disc.style.display = 'none';
-        galaxy.style.display = 'block';
-        if (!gRenderer) initGalaxy();
-        else {
-          const w = galaxy.offsetWidth || 500;
-          const h = galaxy.offsetHeight || 500;
-          gRenderer.setSize(w, h);
-          gCamera.aspect = w / h;
-          gCamera.updateProjectionMatrix();
-        }
-      }, 500);
-    } else {
-      galaxy.style.display = 'none';
-      if (disc) disc.style.display = 'flex';
-      setTimeout(() => {
-        if (container) {
-          container.style.opacity = '1';
-          container.style.transform = 'scale(1)';
-        }
-      }, 50);
-    }
-    toast(`Chế độ: ${state.visualizerMode === '3d' ? 'Vũ trụ 3D' : 'Đĩa xoay 2D'}`, 'info');
-  }
-
   // ── Player Controls ───────────────────────────────────────────
+  let playbackWatchdogTimer = null;
+  let watchdogStallMs = 0;
+  let watchdogPrevTime = 0;
+  let endTransitionLock = false;
+  let stallRecoverAttempts = 0;
+  let pendingResumeTime = null;
+  let mixTransitionActive = false;
+  let mixFadeTimer = null;
+
   function setupPlayerControls() {
+    const getActiveMixSeconds = () => (isSuperMode() ? 0 : Number(state.mixTransitionSeconds || 0));
+
+    const clearMixTimers = () => {
+      mixTransitionActive = false;
+      if (mixFadeTimer) {
+        clearInterval(mixFadeTimer);
+        mixFadeTimer = null;
+      }
+    };
+
+    const startSimpleMixTransition = () => {
+      if (mixTransitionActive) return;
+      const mixSec = getActiveMixSeconds();
+      if (mixSec <= 0) return;
+      if (state.repeat === 'one') return;
+      if (!state.queue || state.queue.length < 2) return;
+      if (state.currentIndex < 0 || state.currentIndex >= state.queue.length - 1) return;
+
+      mixTransitionActive = true;
+      const targetVol = state.volume / 100;
+      // Keep transition short so we always switch before true end.
+      const totalMs = Math.max(350, Math.floor(mixSec * 650));
+      const stepMs = 100;
+      const steps = Math.max(1, Math.floor(totalMs / stepMs));
+      let i = 0;
+      const startVol = Math.max(0, Math.min(1, audio.volume));
+
+      mixFadeTimer = setInterval(() => {
+        i++;
+        audio.volume = Math.max(0, startVol * (1 - i / steps));
+        if (i < steps) return;
+
+        clearInterval(mixFadeTimer);
+        mixFadeTimer = null;
+        nextTrack();
+
+        setTimeout(() => {
+          let j = 0;
+          const inSteps = Math.max(1, Math.floor((totalMs * 0.75) / stepMs));
+          audio.volume = 0;
+          const inTimer = setInterval(() => {
+            j++;
+            audio.volume = Math.min(targetVol, targetVol * (j / inSteps));
+            if (j >= inSteps) {
+              clearInterval(inTimer);
+              audio.volume = targetVol;
+              mixTransitionActive = false;
+            }
+          }, stepMs);
+        }, 120);
+      }, stepMs);
+    };
+
+    const handleTrackEnded = (fromWatchdog = false) => {
+      if (endTransitionLock) return;
+      endTransitionLock = true;
+      clearMixTimers();
+
+      if (state.currentSongInfo) recordListeningSnapshot(state.currentSongInfo, true);
+      state.isPlaying = false;
+      updatePlayBtns(false);
+      emitRoomState({ isPlaying: false });
+
+      if (state.repeat === 'one') {
+        audio.currentTime = 0;
+        audio.play().then(() => {
+          state.isPlaying = true;
+          updatePlayBtns(true);
+        }).catch(() => { });
+      } else {
+        if (fromWatchdog) console.warn('[MiGu] Watchdog forced track end transition.');
+        nextTrack();
+      }
+
+      setTimeout(() => { endTransitionLock = false; }, 400);
+    };
+
     const toggle = () => {
       if (!audio.src) return;
       if (state.isPlaying) {
@@ -1653,6 +1691,9 @@
     // Audio events
     audio.addEventListener('timeupdate', () => {
       if (!audio.duration) return;
+      watchdogPrevTime = audio.currentTime;
+      watchdogStallMs = 0;
+      stallRecoverAttempts = 0;
       const pct = (audio.currentTime / audio.duration) * 100;
       const npFill = $('#np-progress-fill');
       const pbFill = $('#pb-progress-fill');
@@ -1661,16 +1702,20 @@
       $('#np-current-time').textContent = fmtDur(audio.currentTime);
       $('#np-duration').textContent = fmtDur(audio.duration);
       $('#pb-time').textContent = `${fmtDur(audio.currentTime)} / ${fmtDur(audio.duration)}`;
+
+      const mixSec = getActiveMixSeconds();
+      if (mixSec > 0 && !mixTransitionActive) {
+        const remaining = Number(audio.duration - audio.currentTime);
+        // Trigger earlier than configured duration to avoid "end first, then switch" feel.
+        const triggerWindow = mixSec + 1.25;
+        if (remaining <= triggerWindow && remaining > 0.2) {
+          startSimpleMixTransition();
+        }
+      }
     });
 
     audio.addEventListener('ended', () => {
-      state.isPlaying = false;
-      updatePlayBtns(false);
-      emitRoomState({ isPlaying: false });
-      if (state.repeat === 'one') {
-        audio.currentTime = 0;
-        audio.play().then(() => { state.isPlaying = true; updatePlayBtns(true); });
-      } else nextTrack();
+      handleTrackEnded(false);
     });
 
     audio.addEventListener('error', (e) => {
@@ -1685,6 +1730,62 @@
         }
       }, 2000);
     });
+
+    audio.addEventListener('loadedmetadata', () => {
+      if (pendingResumeTime !== null && Number.isFinite(pendingResumeTime)) {
+        try {
+          audio.currentTime = Math.max(0, Math.min(pendingResumeTime, (audio.duration || pendingResumeTime)));
+        } catch (_) { }
+        pendingResumeTime = null;
+      }
+    });
+
+    // Failsafe: some streams stall near end and never emit "ended"
+    if (playbackWatchdogTimer) clearInterval(playbackWatchdogTimer);
+    playbackWatchdogTimer = setInterval(() => {
+      if (!state.isPlaying || !audio.src) return;
+      const dur = Number(audio.duration || 0);
+      if (!Number.isFinite(dur) || dur <= 0) return;
+
+      const cur = Number(audio.currentTime || 0);
+      const remaining = dur - cur;
+      const progressed = Math.abs(cur - watchdogPrevTime) > 0.02;
+
+      if (progressed) {
+        watchdogStallMs = 0;
+        watchdogPrevTime = cur;
+        return;
+      }
+
+      watchdogStallMs += 1000;
+
+      // Mid-song stall recovery: refresh stream and resume from stuck timestamp
+      if (remaining > 2.2 && watchdogStallMs >= 8000) {
+        if (stallRecoverAttempts < 2 && state.currentSongInfo?.videoId) {
+          stallRecoverAttempts++;
+          const resumeAt = Math.max(0, cur - 0.3);
+          pendingResumeTime = resumeAt;
+          const vid = encodeURIComponent(state.currentSongInfo.videoId);
+          audio.src = `/api/stream/${vid}?recover=${Date.now()}&r=${stallRecoverAttempts}`;
+          audio.load();
+          audio.play().then(() => {
+            state.isPlaying = true;
+            updatePlayBtns(true);
+          }).catch(() => { });
+          watchdogStallMs = 0;
+          return;
+        }
+
+        // Recovery exhausted -> skip to avoid permanent freeze
+        handleTrackEnded(true);
+        return;
+      }
+
+      // If the stream freezes anywhere in the last 10 seconds, force next track.
+      if (remaining <= 10 && watchdogStallMs >= 3500) {
+        handleTrackEnded(true);
+      }
+    }, 1000);
 
     // Favorite buttons
     $('#np-toggle-fav')?.addEventListener('click', () => {
@@ -1813,7 +1914,7 @@
     `).join('');
 
     list.querySelectorAll('.queue-item').forEach(item => {
-      item.addEventListener('click', (e) => {
+      item.addEventListener('click', async (e) => {
         if (e.target.closest('.queue-item-remove')) return;
         const idx = parseInt(item.dataset.index);
         
@@ -1822,7 +1923,13 @@
           else toast('Chỉ Host mới có quyền chọn bài phát trực tiếp', 'info');
         } else {
           if (roomCode && isSyncActive()) {
-            if (confirm('Dừng nghe chung để phát danh sách cá nhân?')) {
+            const agreed = await showConfirmModal({
+              title: 'Rời chế độ nghe chung?',
+              message: 'Bạn sẽ chuyển sang phát danh sách cá nhân.',
+              confirmText: 'Tiếp tục',
+              cancelText: 'Ở lại phòng'
+            });
+            if (agreed) {
               window.userSyncChoice = 'start'; // "start" mode = unsynced local
               playSong(state.queue[idx], false);
             }
@@ -1863,6 +1970,9 @@
     const idx = state.favorites.findIndex(f => f.videoId === song.videoId);
     if (idx >= 0) { state.favorites.splice(idx, 1); toast('Đã xóa khỏi yêu thích', 'info'); }
     else { state.favorites.unshift(song); toast('Đã thêm vào yêu thích ❤️', 'success'); }
+    state.listeningHistory.forEach(h => {
+      if (h.videoId === song.videoId) h.liked = state.favorites.some(f => f.videoId === song.videoId);
+    });
     saveState();
     $('#fav-count').textContent = state.favorites.length;
     // Refresh view if currently open
@@ -1903,8 +2013,28 @@
     if (songs.length === 0) {
       listEl.innerHTML = '<div class="empty-state"><p>Playlist trống — thêm bài hát từ kết quả tìm kiếm</p></div>';
     } else {
-      listEl.innerHTML = songs.map(item => renderResultItem(item)).join('');
-      bindResultActions(listEl);
+      listEl.innerHTML = songs.map((item, idx) => `
+        <div class="result-item playlist-row" draggable="true" data-index="${idx}">
+          <div style="cursor:grab; opacity:.6; width:20px; text-align:center;" title="Kéo để đổi vị trí">☰</div>
+          <img class="result-thumb" src="${item.thumbnail}" alt="" loading="lazy">
+          <div class="result-info">
+            <div class="result-title">${esc(item.title)}</div>
+            <div class="result-meta"><span>${esc(item.author || '')}</span><span>${fmtDur(item.duration || 0)}</span></div>
+          </div>
+          <div class="result-actions">
+            <button class="result-action-btn play-btn" title="Phát" data-action="play">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            </button>
+            <button class="result-action-btn add-btn" title="Thêm vào hàng chờ" data-action="add">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            </button>
+            <button class="result-action-btn" title="Xóa khỏi playlist" data-action="remove">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+        </div>
+      `).join('');
+      bindPlaylistActions(name);
     }
 
     // Play all button
@@ -1917,13 +2047,93 @@
     };
     playAllBtn?.addEventListener('click', playAllBtn._handler);
 
+    const del = $('#btn-delete-playlist');
+    if (del) {
+      del.style.display = 'inline-flex';
+      del.onclick = async () => {
+        const playlistName = state.currentPlaylistView;
+        if (!playlistName || !state.playlists[playlistName]) return;
+        const agreed = await showConfirmModal({
+          title: 'Xóa playlist',
+          message: `Playlist "${playlistName}" sẽ bị xóa vĩnh viễn.`,
+          confirmText: 'Xóa playlist',
+          cancelText: 'Hủy',
+          danger: true
+        });
+        if (!agreed) return;
+        delete state.playlists[playlistName];
+        saveState();
+        renderPlaylists();
+        switchView('home');
+        toast('Đã xóa playlist', 'info');
+      };
+    }
+
     switchView('playlist');
+  }
+
+  function bindPlaylistActions(playlistName) {
+    const listEl = $('#playlist-songs-list');
+    const songs = state.playlists[playlistName] || [];
+    if (!listEl) return;
+
+    listEl.querySelectorAll('.playlist-row').forEach(row => {
+      const idx = parseInt(row.dataset.index, 10);
+      const song = songs[idx];
+      if (!song) return;
+
+      row.querySelector('[data-action="play"]')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        playSong(song);
+      });
+      row.querySelector('[data-action="add"]')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        addToQueue(song);
+        toast('Đã thêm vào hàng chờ', 'success');
+      });
+      row.querySelector('[data-action="remove"]')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        state.playlists[playlistName].splice(idx, 1);
+        saveState();
+        renderPlaylists();
+        openPlaylistView(playlistName);
+        toast('Đã xóa bài khỏi playlist', 'info');
+      });
+    });
+
+    let dragIndex = -1;
+    listEl.querySelectorAll('.playlist-row').forEach(row => {
+      row.addEventListener('dragstart', () => {
+        dragIndex = parseInt(row.dataset.index, 10);
+        row.style.opacity = '0.5';
+      });
+      row.addEventListener('dragend', () => {
+        row.style.opacity = '1';
+      });
+      row.addEventListener('dragover', (e) => e.preventDefault());
+      row.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const dropIndex = parseInt(row.dataset.index, 10);
+        if (Number.isNaN(dragIndex) || Number.isNaN(dropIndex) || dragIndex === dropIndex) return;
+        const arr = state.playlists[playlistName];
+        const moved = arr.splice(dragIndex, 1)[0];
+        arr.splice(dropIndex, 0, moved);
+        saveState();
+        renderPlaylists();
+        openPlaylistView(playlistName);
+        toast('Đã sắp xếp lại playlist', 'success');
+      });
+    });
   }
 
   // ── Recommendations ───────────────────────────────────────────
   async function loadRecommendations(videoId) {
     const container = $('#suggest-container');
     if (!container) return;
+    if (isSuperMode()) {
+      container.innerHTML = '<div class="empty-state small"><p>Super mode: tắt gợi ý để tiết kiệm hiệu năng</p></div>';
+      return;
+    }
     container.innerHTML = '<div class="loading-spinner"><div class="spinner"></div></div>';
 
     try {
@@ -1978,10 +2188,68 @@
         return;
       }
 
-      container.innerHTML = data.results.map(song => renderSongCard(song)).join('');
+      const rows = isSuperMode() ? data.results.slice(0, 8) : data.results;
+      container.innerHTML = rows.map(song => renderSongCard(song)).join('');
       bindSongCards(container);
     } catch (err) {
       container.innerHTML = '<div class="empty-state small"><p>Không tải được nhạc thịnh hành</p></div>';
+    }
+  }
+
+  async function loadPersonalizedRecommendations() {
+    const container = $('#recommended-container');
+    if (!container) return;
+    if (isSuperMode()) {
+      container.innerHTML = '<div class="empty-state small" style="grid-column: 1 / -1;"><p>Super mode: tắt gợi ý cá nhân</p></div>';
+      return;
+    }
+    seedHistoryFromQueueIfNeeded();
+
+    if (!state.listeningHistory || state.listeningHistory.length < 3) {
+      container.innerHTML = `<div class="empty-state small" style="grid-column: 1 / -1;">
+        <p>Phát thêm vài bài để cá nhân hóa gợi ý</p>
+      </div>`;
+      return;
+    }
+
+    container.innerHTML = '<div class="loading-spinner" style="grid-column: 1 / -1; padding: 30px 0;"><div class="spinner"></div></div>';
+
+    try {
+      const res = await fetch('/api/recommend', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ history: state.listeningHistory.slice(-50) })
+      });
+      const data = await res.json();
+      const results = Array.isArray(data.results) ? data.results : [];
+      if (results.length === 0) {
+        container.innerHTML = `<div class="empty-state small" style="grid-column: 1 / -1;">
+          <p>Chưa đủ dữ liệu để đề xuất</p>
+        </div>`;
+        return;
+      }
+
+      container.innerHTML = results.map(song => `
+        <div class="song-card" data-id="${song.videoId}" data-reason="${esc(song.reason || '')}">
+          <img class="song-card-thumb" src="${song.thumbnail}" alt="" loading="lazy">
+          <div class="song-card-overlay">
+            <div class="song-card-play">
+              <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+            </div>
+          </div>
+          <span class="song-card-duration">${fmtDur(song.duration)}</span>
+          <div class="song-card-info">
+            <div class="song-card-title">${esc(song.title)}</div>
+            <div class="song-card-artist">${esc(song.author)}</div>
+            <div class="song-card-artist" style="color: var(--accent); font-size: 11px;">${esc(song.reason || 'Đề xuất cho bạn')}</div>
+          </div>
+        </div>
+      `).join('');
+      bindSongCards(container);
+    } catch (err) {
+      container.innerHTML = `<div class="empty-state small" style="grid-column: 1 / -1;">
+        <p>Không tải được gợi ý cá nhân</p>
+      </div>`;
     }
   }
 
@@ -2067,6 +2335,47 @@
       $('#new-playlist-name').addEventListener('keydown', (e) => {
         if (e.key === 'Enter') $('#modal-create').click();
       });
+    });
+  }
+
+  function showConfirmModal({
+    title = 'Xác nhận',
+    message = 'Bạn có chắc muốn tiếp tục?',
+    confirmText = 'Đồng ý',
+    cancelText = 'Hủy',
+    danger = false
+  } = {}) {
+    return new Promise((resolve) => {
+      const overlay = $('#modal-overlay');
+      const content = $('#modal-content');
+      if (!overlay || !content) return resolve(false);
+
+      content.innerHTML = `
+        <h3>${esc(title)}</h3>
+        <p style="margin-top:8px;color:var(--text-secondary);line-height:1.5">${esc(message)}</p>
+        <div class="modal-actions" style="margin-top:16px;display:flex;justify-content:flex-end;gap:10px;">
+          <button class="btn-text" id="confirm-cancel">${esc(cancelText)}</button>
+          <button class="${danger ? 'btn-text' : 'btn-primary'}" id="confirm-ok"
+            style="${danger ? 'border:1px solid rgba(255,71,87,.5);color:#ff6b76;background:rgba(255,71,87,.08);padding:8px 14px;border-radius:999px;' : ''}">
+            ${esc(confirmText)}
+          </button>
+        </div>`;
+
+      const cleanupAndClose = (result) => {
+        overlay.style.display = 'none';
+        resolve(result);
+      };
+
+      overlay.style.display = '';
+      $('#confirm-cancel')?.addEventListener('click', () => cleanupAndClose(false));
+      $('#confirm-ok')?.addEventListener('click', () => cleanupAndClose(true));
+      const onOverlayClick = (e) => {
+        if (e.target === overlay) {
+          overlay.removeEventListener('click', onOverlayClick);
+          cleanupAndClose(false);
+        }
+      };
+      overlay.addEventListener('click', onOverlayClick);
     });
   }
 
