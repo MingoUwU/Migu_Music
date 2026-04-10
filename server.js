@@ -134,6 +134,36 @@ function runYtDlp(args) {
   });
 }
 
+async function runYtDlpWithCookieFallback(baseArgs, targetUrl) {
+  // First try without cookies for speed and portability.
+  try {
+    return await runYtDlp([...baseArgs, targetUrl]);
+  } catch (err) {
+    const msg = String(err?.message || '');
+    const needsAuth =
+      msg.includes('Sign in to confirm') ||
+      msg.includes('not a bot') ||
+      msg.includes('cookies for the authentication');
+
+    if (!needsAuth) throw err;
+
+    log('[MiGu] YouTube requested auth challenge, trying browser cookies fallback...', 'WARN');
+
+    const cookieBrowsers = ['chrome', 'edge', 'firefox'];
+    let lastErr = err;
+    for (const browser of cookieBrowsers) {
+      try {
+        log(`[MiGu] Retrying yt-dlp with --cookies-from-browser ${browser}`, 'WARN');
+        return await runYtDlp([...baseArgs, '--cookies-from-browser', browser, targetUrl]);
+      } catch (cookieErr) {
+        lastErr = cookieErr;
+      }
+    }
+
+    throw lastErr;
+  }
+}
+
 // ── YouTube Innertube Clients (fallback chain) ───────────────────
 const INNERTUBE_CLIENTS = [
   {
@@ -159,6 +189,7 @@ const INNERTUBE_CLIENTS = [
 ];
 
 let currentClientIndex = 0;
+const YTDLP_EXTRACTOR_ARGS = 'youtube:player_client=tv,android';
 
 function getCurrentClient() {
   return INNERTUBE_CLIENTS[currentClientIndex];
@@ -291,16 +322,16 @@ async function getAudioUrl(videoId) {
 
   log('[MiGu] Extracting for URL: ' + targetUrl);
 
-  const jsonStr = await runYtDlp([
+  const jsonStr = await runYtDlpWithCookieFallback([
     '--no-download',
     '-f', format,
     '--dump-json',
     '--no-playlist',
     '--no-warnings',
     '--extractor-retries', '3',
-    '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    targetUrl
-  ]);
+    '--extractor-args', YTDLP_EXTRACTOR_ARGS,
+    '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+  ], targetUrl);
 
   const info = JSON.parse(jsonStr);
   log('[MiGu] Stream URL obtained: ' + (info.url ? 'YES' : 'NO'));
@@ -333,16 +364,16 @@ async function getVideoInfo(videoId) {
 
   log('[MiGu] Extracting metadata for: ' + targetUrl);
 
-  const jsonStr = await runYtDlp([
+  const jsonStr = await runYtDlpWithCookieFallback([
     '--no-download',
     '-f', format,
     '--dump-json',
     '--no-playlist',
     '--no-warnings',
     '--extractor-retries', '3',
-    '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    targetUrl
-  ]);
+    '--extractor-args', YTDLP_EXTRACTOR_ARGS,
+    '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+  ], targetUrl);
 
   const info = JSON.parse(jsonStr);
 
