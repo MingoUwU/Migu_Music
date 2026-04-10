@@ -133,6 +133,15 @@
             <div class="spinner"></div>
           </div>
         </div>
+
+        <div class="section-header" style="margin-top: 24px;">
+          <h3>✨ Gợi ý cho bạn</h3>
+        </div>
+        <div class="trending-grid" id="recommended-container">
+          <div class="empty-state small" style="grid-column: 1 / -1;">
+            <p>Phát vài bài để hệ thống hiểu gu của bạn</p>
+          </div>
+        </div>
       </section>
 
       <!-- ─── Search ───────────────────────────── -->
@@ -386,17 +395,22 @@
 
       <!-- ─── Playlist View ─────────────────────── -->
       <section class="view" id="view-playlist">
-        <div class="view-header" style="display:flex;align-items:center;gap:12px;justify-content:space-between;">
+        <div class="view-header playlist-header">
           <div>
             <h2 id="playlist-view-title">Playlist</h2>
             <p class="greeting-sub" id="playlist-view-sub">0 bài hát</p>
           </div>
-          <button class="btn-primary" id="btn-playlist-play-all" style="padding:8px 18px;font-size:12px;">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polygon points="5 3 19 12 5 21 5 3" />
-            </svg>
-            Phát tất cả
-          </button>
+          <div class="playlist-actions" id="playlist-actions">
+            <button class="btn-primary" id="btn-playlist-play-all">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="5 3 19 12 5 21 5 3" />
+              </svg>
+              Phát tất cả
+            </button>
+            <button class="btn-text" id="btn-delete-playlist" style="display:none">
+              Xóa playlist
+            </button>
+          </div>
         </div>
         <div class="search-results" id="playlist-songs-list">
           <div class="empty-state">

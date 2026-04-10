@@ -22,6 +22,8 @@
     currentSongInfo: null,
     roomQueue: [],
     activeQueueTab: 'personal',
+    listeningHistory: [],
+    activeListenSession: null,
   };
 
   let socket = null;
@@ -29,6 +31,7 @@
   let isRoomHost = false;
   let isProcessingRoomSync = false;
   let syncHeartbeat = null;
+  let myRoomJoinedAt = Date.now();
 
   const SUPABASE_URL = 'https://jhuqonoldshtxsquurho.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_ANl0zKdVePo8bAE_B8qKWA_bZOV5BvL';
@@ -146,6 +149,7 @@
     setupRoom(); // Initialize socket
     setupVisualizer(); // Initialize Web Audio API
     loadTrending();
+    loadPersonalizedRecommendations();
     renderPlaylists();
     setGreeting();
     audio.volume = state.volume / 100;
@@ -188,8 +192,36 @@
         state.currentIndex = d.currentIndex ?? -1;
         state.repeat = d.repeat || 'off';
         state.shuffle = d.shuffle || false;
+        state.listeningHistory = Array.isArray(d.listeningHistory) ? d.listeningHistory.slice(-120) : [];
       }
     } catch (e) { /* silent */ }
+  }
+
+  function seedHistoryFromQueueIfNeeded() {
+    if (state.listeningHistory.length >= 3) return;
+    const source = (state.queue || []).slice(-15);
+    if (!source.length) return;
+    const existing = new Set(state.listeningHistory.map(h => h.videoId));
+    const seeded = [];
+
+    for (const s of source) {
+      if (!s || !s.videoId || existing.has(s.videoId)) continue;
+      seeded.push({
+        videoId: s.videoId,
+        title: s.title || '',
+        author: s.author || '',
+        listenRatio: 0.55,
+        skippedEarly: false,
+        liked: state.favorites.some(f => f.videoId === s.videoId),
+        timestamp: Date.now() - 3600000
+      });
+      existing.add(s.videoId);
+    }
+
+    if (seeded.length) {
+      state.listeningHistory = [...state.listeningHistory, ...seeded].slice(-150);
+      saveState();
+    }
   }
 
   function saveState() {
@@ -202,8 +234,33 @@
         currentIndex: state.currentIndex,
         repeat: state.repeat,
         shuffle: state.shuffle,
+        listeningHistory: state.listeningHistory.slice(-120),
       }));
     } catch (e) { /* silent */ }
+  }
+
+  function recordListeningSnapshot(song, ended = false) {
+    if (!song || !song.videoId) return;
+    const duration = Number(song.duration || audio.duration || 0);
+    const listenedSec = Number(audio.currentTime || 0);
+    const listenRatio = duration > 0 ? Math.max(0, Math.min(1, listenedSec / duration)) : 0;
+    const skippedEarly = !ended && listenedSec > 0 && listenedSec < 25;
+    const liked = state.favorites.some(f => f.videoId === song.videoId);
+
+    state.listeningHistory.push({
+      videoId: song.videoId,
+      title: song.title || '',
+      author: song.author || '',
+      listenRatio: Number(listenRatio.toFixed(3)),
+      skippedEarly,
+      liked,
+      timestamp: Date.now()
+    });
+
+    if (state.listeningHistory.length > 150) {
+      state.listeningHistory = state.listeningHistory.slice(-150);
+    }
+    saveState();
   }
 
   // ── Room (Supabase Listen Together) ──────────────────────────────────
@@ -434,6 +491,7 @@
     }
 
     roomCode = code.toUpperCase();
+    myRoomJoinedAt = Date.now();
     isProcessingRoomSync = true;
     window.targetSyncTime = null; // Clear any old sync time
 
@@ -465,14 +523,20 @@
         if (el) el.textContent = users.length;
 
 
-        // Host Election: earliest joined_at
+        // Host Election: stable earliest joined_at
         let hostId = null;
-        let earliest = Infinity;
+        let earliest = Number.POSITIVE_INFINITY;
         for (const [key, presences] of Object.entries(presence)) {
-          if (presences[0] && presences[0].joined_at < earliest) {
-            earliest = presences[0].joined_at;
+          const joinedAt = Number(presences?.[0]?.joined_at);
+          if (!Number.isFinite(joinedAt)) continue;
+          if (joinedAt < earliest) {
+            earliest = joinedAt;
             hostId = key;
           }
+        }
+        if (!hostId) {
+          const keys = Object.keys(presence).sort();
+          hostId = keys[0] || null;
         }
 
         const wasHost = isRoomHost;
@@ -489,11 +553,6 @@
             window.currentRoomMetadata = { name: 'Phòng ' + roomCode, tags: '' };
           }
           const meta = window.currentRoomMetadata || {};
-          // Track joined_at for host election
-          roomChannel.track({
-            joined_at: earliest
-          }).catch(() => {});
-
           if (globalLobbyChannel) {
             globalLobbyChannel.track({
               roomId: roomCode,
@@ -547,7 +606,7 @@
 
           const metadata = window.currentRoomMetadata || {};
           await roomChannel.track({
-            joined_at: Date.now()
+            joined_at: myRoomJoinedAt
           });
 
           // Request initial sync from host
@@ -859,6 +918,7 @@
 
     if (view === 'search') setTimeout(() => $('#search-input')?.focus(), 100);
     if (view === 'favorites') renderFavoritesList();
+    if (view === 'home') loadPersonalizedRecommendations();
 
     resetIdle();
   }
@@ -1124,6 +1184,11 @@
       return;
     }
 
+    const previousSong = state.currentSongInfo;
+    if (previousSong && previousSong.videoId !== song.videoId) {
+      recordListeningSnapshot(previousSong, false);
+    }
+
     if (addQ) {
       const q = (roomCode && isRoomHost) ? state.roomQueue : state.queue;
       const idx = q.findIndex(q => q.videoId === song.videoId);
@@ -1145,6 +1210,7 @@
       updatePlayBtns(true);
       $('#np-disc')?.classList.add('spinning');
       loadRecommendations(song.videoId);
+      loadPersonalizedRecommendations();
       if (isRoomHost) emitRoomState(); 
     } catch (err) {
       console.error('Play error:', err);
@@ -1664,6 +1730,7 @@
     });
 
     audio.addEventListener('ended', () => {
+      if (state.currentSongInfo) recordListeningSnapshot(state.currentSongInfo, true);
       state.isPlaying = false;
       updatePlayBtns(false);
       emitRoomState({ isPlaying: false });
@@ -1813,7 +1880,7 @@
     `).join('');
 
     list.querySelectorAll('.queue-item').forEach(item => {
-      item.addEventListener('click', (e) => {
+      item.addEventListener('click', async (e) => {
         if (e.target.closest('.queue-item-remove')) return;
         const idx = parseInt(item.dataset.index);
         
@@ -1822,7 +1889,13 @@
           else toast('Chỉ Host mới có quyền chọn bài phát trực tiếp', 'info');
         } else {
           if (roomCode && isSyncActive()) {
-            if (confirm('Dừng nghe chung để phát danh sách cá nhân?')) {
+            const agreed = await showConfirmModal({
+              title: 'Rời chế độ nghe chung?',
+              message: 'Bạn sẽ chuyển sang phát danh sách cá nhân.',
+              confirmText: 'Tiếp tục',
+              cancelText: 'Ở lại phòng'
+            });
+            if (agreed) {
               window.userSyncChoice = 'start'; // "start" mode = unsynced local
               playSong(state.queue[idx], false);
             }
@@ -1863,6 +1936,9 @@
     const idx = state.favorites.findIndex(f => f.videoId === song.videoId);
     if (idx >= 0) { state.favorites.splice(idx, 1); toast('Đã xóa khỏi yêu thích', 'info'); }
     else { state.favorites.unshift(song); toast('Đã thêm vào yêu thích ❤️', 'success'); }
+    state.listeningHistory.forEach(h => {
+      if (h.videoId === song.videoId) h.liked = state.favorites.some(f => f.videoId === song.videoId);
+    });
     saveState();
     $('#fav-count').textContent = state.favorites.length;
     // Refresh view if currently open
@@ -1903,8 +1979,28 @@
     if (songs.length === 0) {
       listEl.innerHTML = '<div class="empty-state"><p>Playlist trống — thêm bài hát từ kết quả tìm kiếm</p></div>';
     } else {
-      listEl.innerHTML = songs.map(item => renderResultItem(item)).join('');
-      bindResultActions(listEl);
+      listEl.innerHTML = songs.map((item, idx) => `
+        <div class="result-item playlist-row" draggable="true" data-index="${idx}">
+          <div style="cursor:grab; opacity:.6; width:20px; text-align:center;" title="Kéo để đổi vị trí">☰</div>
+          <img class="result-thumb" src="${item.thumbnail}" alt="" loading="lazy">
+          <div class="result-info">
+            <div class="result-title">${esc(item.title)}</div>
+            <div class="result-meta"><span>${esc(item.author || '')}</span><span>${fmtDur(item.duration || 0)}</span></div>
+          </div>
+          <div class="result-actions">
+            <button class="result-action-btn play-btn" title="Phát" data-action="play">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            </button>
+            <button class="result-action-btn add-btn" title="Thêm vào hàng chờ" data-action="add">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            </button>
+            <button class="result-action-btn" title="Xóa khỏi playlist" data-action="remove">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+        </div>
+      `).join('');
+      bindPlaylistActions(name);
     }
 
     // Play all button
@@ -1917,7 +2013,83 @@
     };
     playAllBtn?.addEventListener('click', playAllBtn._handler);
 
+    const del = $('#btn-delete-playlist');
+    if (del) {
+      del.style.display = 'inline-flex';
+      del.onclick = async () => {
+        const playlistName = state.currentPlaylistView;
+        if (!playlistName || !state.playlists[playlistName]) return;
+        const agreed = await showConfirmModal({
+          title: 'Xóa playlist',
+          message: `Playlist "${playlistName}" sẽ bị xóa vĩnh viễn.`,
+          confirmText: 'Xóa playlist',
+          cancelText: 'Hủy',
+          danger: true
+        });
+        if (!agreed) return;
+        delete state.playlists[playlistName];
+        saveState();
+        renderPlaylists();
+        switchView('home');
+        toast('Đã xóa playlist', 'info');
+      };
+    }
+
     switchView('playlist');
+  }
+
+  function bindPlaylistActions(playlistName) {
+    const listEl = $('#playlist-songs-list');
+    const songs = state.playlists[playlistName] || [];
+    if (!listEl) return;
+
+    listEl.querySelectorAll('.playlist-row').forEach(row => {
+      const idx = parseInt(row.dataset.index, 10);
+      const song = songs[idx];
+      if (!song) return;
+
+      row.querySelector('[data-action="play"]')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        playSong(song);
+      });
+      row.querySelector('[data-action="add"]')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        addToQueue(song);
+        toast('Đã thêm vào hàng chờ', 'success');
+      });
+      row.querySelector('[data-action="remove"]')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        state.playlists[playlistName].splice(idx, 1);
+        saveState();
+        renderPlaylists();
+        openPlaylistView(playlistName);
+        toast('Đã xóa bài khỏi playlist', 'info');
+      });
+    });
+
+    let dragIndex = -1;
+    listEl.querySelectorAll('.playlist-row').forEach(row => {
+      row.addEventListener('dragstart', () => {
+        dragIndex = parseInt(row.dataset.index, 10);
+        row.style.opacity = '0.5';
+      });
+      row.addEventListener('dragend', () => {
+        row.style.opacity = '1';
+      });
+      row.addEventListener('dragover', (e) => e.preventDefault());
+      row.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const dropIndex = parseInt(row.dataset.index, 10);
+        if (Number.isNaN(dragIndex) || Number.isNaN(dropIndex) || dragIndex === dropIndex) return;
+        const arr = state.playlists[playlistName];
+        const moved = arr.splice(dragIndex, 1)[0];
+        arr.splice(dropIndex, 0, moved);
+        saveState();
+        renderPlaylists();
+        openPlaylistView(playlistName);
+        toast('Đã sắp xếp lại playlist', 'success');
+      });
+    });
   }
 
   // ── Recommendations ───────────────────────────────────────────
@@ -1982,6 +2154,59 @@
       bindSongCards(container);
     } catch (err) {
       container.innerHTML = '<div class="empty-state small"><p>Không tải được nhạc thịnh hành</p></div>';
+    }
+  }
+
+  async function loadPersonalizedRecommendations() {
+    const container = $('#recommended-container');
+    if (!container) return;
+    seedHistoryFromQueueIfNeeded();
+
+    if (!state.listeningHistory || state.listeningHistory.length < 3) {
+      container.innerHTML = `<div class="empty-state small" style="grid-column: 1 / -1;">
+        <p>Phát thêm vài bài để cá nhân hóa gợi ý</p>
+      </div>`;
+      return;
+    }
+
+    container.innerHTML = '<div class="loading-spinner" style="grid-column: 1 / -1; padding: 30px 0;"><div class="spinner"></div></div>';
+
+    try {
+      const res = await fetch('/api/recommend', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ history: state.listeningHistory.slice(-50) })
+      });
+      const data = await res.json();
+      const results = Array.isArray(data.results) ? data.results : [];
+      if (results.length === 0) {
+        container.innerHTML = `<div class="empty-state small" style="grid-column: 1 / -1;">
+          <p>Chưa đủ dữ liệu để đề xuất</p>
+        </div>`;
+        return;
+      }
+
+      container.innerHTML = results.map(song => `
+        <div class="song-card" data-id="${song.videoId}" data-reason="${esc(song.reason || '')}">
+          <img class="song-card-thumb" src="${song.thumbnail}" alt="" loading="lazy">
+          <div class="song-card-overlay">
+            <div class="song-card-play">
+              <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+            </div>
+          </div>
+          <span class="song-card-duration">${fmtDur(song.duration)}</span>
+          <div class="song-card-info">
+            <div class="song-card-title">${esc(song.title)}</div>
+            <div class="song-card-artist">${esc(song.author)}</div>
+            <div class="song-card-artist" style="color: var(--accent); font-size: 11px;">${esc(song.reason || 'Đề xuất cho bạn')}</div>
+          </div>
+        </div>
+      `).join('');
+      bindSongCards(container);
+    } catch (err) {
+      container.innerHTML = `<div class="empty-state small" style="grid-column: 1 / -1;">
+        <p>Không tải được gợi ý cá nhân</p>
+      </div>`;
     }
   }
 
@@ -2067,6 +2292,47 @@
       $('#new-playlist-name').addEventListener('keydown', (e) => {
         if (e.key === 'Enter') $('#modal-create').click();
       });
+    });
+  }
+
+  function showConfirmModal({
+    title = 'Xác nhận',
+    message = 'Bạn có chắc muốn tiếp tục?',
+    confirmText = 'Đồng ý',
+    cancelText = 'Hủy',
+    danger = false
+  } = {}) {
+    return new Promise((resolve) => {
+      const overlay = $('#modal-overlay');
+      const content = $('#modal-content');
+      if (!overlay || !content) return resolve(false);
+
+      content.innerHTML = `
+        <h3>${esc(title)}</h3>
+        <p style="margin-top:8px;color:var(--text-secondary);line-height:1.5">${esc(message)}</p>
+        <div class="modal-actions" style="margin-top:16px;display:flex;justify-content:flex-end;gap:10px;">
+          <button class="btn-text" id="confirm-cancel">${esc(cancelText)}</button>
+          <button class="${danger ? 'btn-text' : 'btn-primary'}" id="confirm-ok"
+            style="${danger ? 'border:1px solid rgba(255,71,87,.5);color:#ff6b76;background:rgba(255,71,87,.08);padding:8px 14px;border-radius:999px;' : ''}">
+            ${esc(confirmText)}
+          </button>
+        </div>`;
+
+      const cleanupAndClose = (result) => {
+        overlay.style.display = 'none';
+        resolve(result);
+      };
+
+      overlay.style.display = '';
+      $('#confirm-cancel')?.addEventListener('click', () => cleanupAndClose(false));
+      $('#confirm-ok')?.addEventListener('click', () => cleanupAndClose(true));
+      const onOverlayClick = (e) => {
+        if (e.target === overlay) {
+          overlay.removeEventListener('click', onOverlayClick);
+          cleanupAndClose(false);
+        }
+      };
+      overlay.addEventListener('click', onOverlayClick);
     });
   }
 

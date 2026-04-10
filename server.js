@@ -288,6 +288,77 @@ async function youtubeSuggestions(query) {
   return (data[1] || []).map(item => item[0]);
 }
 
+function tokenizeText(input) {
+  if (!input) return [];
+  return String(input)
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .split(/\s+/)
+    .filter(t => t.length >= 2);
+}
+
+function buildHistoryProfile(history = []) {
+  const artistWeight = new Map();
+  const tokenWeight = new Map();
+  const negativeArtistWeight = new Map();
+
+  for (const h of history) {
+    const artist = String(h.author || '').trim().toLowerCase();
+    const titleTokens = tokenizeText(h.title || '');
+    const listened = Number(h.listenRatio || 0);
+    const liked = Boolean(h.liked);
+    const skipped = Boolean(h.skippedEarly);
+
+    let weight = 1;
+    if (listened > 0.8) weight += 1.4;
+    else if (listened > 0.5) weight += 0.8;
+    else if (listened < 0.2) weight -= 0.5;
+    if (liked) weight += 2;
+    if (skipped) weight -= 1.2;
+
+    if (artist) {
+      if (weight >= 0) artistWeight.set(artist, (artistWeight.get(artist) || 0) + weight);
+      else negativeArtistWeight.set(artist, (negativeArtistWeight.get(artist) || 0) + Math.abs(weight));
+    }
+    for (const t of titleTokens) {
+      tokenWeight.set(t, (tokenWeight.get(t) || 0) + Math.max(0, weight));
+    }
+  }
+
+  const topArtists = [...artistWeight.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(e => e[0]);
+  const topTokens = [...tokenWeight.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(e => e[0]);
+
+  return { artistWeight, tokenWeight, negativeArtistWeight, topArtists, topTokens };
+}
+
+function scoreCandidate(song, profile, recentIds = new Set()) {
+  const artist = String(song.author || '').trim().toLowerCase();
+  const tokens = tokenizeText(song.title || '');
+  let score = 0;
+  const reasons = [];
+
+  const artistAffinity = profile.artistWeight.get(artist) || 0;
+  if (artistAffinity > 0) {
+    score += Math.min(artistAffinity * 1.8, 8);
+    reasons.push(`Bạn hay nghe ${song.author}`);
+  }
+
+  const artistPenalty = profile.negativeArtistWeight.get(artist) || 0;
+  if (artistPenalty > 0) score -= Math.min(artistPenalty * 1.2, 4);
+
+  let tokenScore = 0;
+  for (const t of tokens) tokenScore += profile.tokenWeight.get(t) || 0;
+  if (tokenScore > 0) {
+    score += Math.min(tokenScore * 0.5, 6);
+    if (!reasons.length) reasons.push('Hợp gu gần đây của bạn');
+  }
+
+  if (recentIds.has(song.videoId)) score -= 10;
+  if (song.viewCount && song.viewCount > 0) score += Math.min(Math.log10(song.viewCount + 1), 3);
+
+  return { score, reason: reasons[0] || 'Đề xuất theo lịch sử nghe' };
+}
+
 // ── Cache for stream URLs ────────────────────────────────────────
 async function getCachedUrl(videoId) {
   try {
@@ -580,6 +651,60 @@ app.get('/api/trending', async (req, res) => {
   } catch (err) {
     log('[MiGu] Trending error: ' + err.message, 'ERROR');
     res.status(500).json({ error: 'Failed to get trending.' });
+  }
+});
+
+// ── API: Personalized Recommendations (free, rule-based) ───────
+app.post('/api/recommend', async (req, res) => {
+  try {
+    const history = Array.isArray(req.body?.history) ? req.body.history.slice(-50) : [];
+    if (history.length === 0) {
+      return res.json({ results: [], source: 'empty-history' });
+    }
+
+    const profile = buildHistoryProfile(history);
+    const recentIds = new Set(history.slice(-20).map(h => h.videoId).filter(Boolean));
+    const seen = new Set(recentIds);
+    const pool = [];
+
+    const trending = await youtubeSearch('nhạc thịnh hành việt nam');
+    for (const s of trending.slice(0, 18)) {
+      if (!seen.has(s.videoId)) {
+        seen.add(s.videoId);
+        pool.push(s);
+      }
+    }
+
+    const queries = [];
+    if (profile.topArtists.length > 0) queries.push(...profile.topArtists.slice(0, 3));
+    if (profile.topTokens.length > 2) queries.push(profile.topTokens.slice(0, 3).join(' '));
+    if (queries.length === 0) queries.push('nhạc chill');
+
+    for (const q of queries.slice(0, 4)) {
+      try {
+        const results = await youtubeSearch(q);
+        for (const s of results.slice(0, 8)) {
+          if (!seen.has(s.videoId)) {
+            seen.add(s.videoId);
+            pool.push(s);
+          }
+        }
+      } catch (_) { }
+    }
+
+    const ranked = pool
+      .map(song => {
+        const scored = scoreCandidate(song, profile, recentIds);
+        return { ...song, score: Number(scored.score.toFixed(3)), reason: scored.reason };
+      })
+      .filter(s => s.score > -2)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 14);
+
+    res.json({ results: ranked, source: 'rule-based' });
+  } catch (err) {
+    log('[MiGu] Recommend error: ' + err.message, 'ERROR');
+    res.status(500).json({ error: 'Failed to build recommendations.' });
   }
 });
 

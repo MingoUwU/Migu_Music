@@ -264,6 +264,33 @@ img    { display: block; max-width: 100%; }
 
 /* ── Home View ────────────────────────────────────────────────── */
 .view-header { margin-bottom: 28px; }
+.playlist-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.playlist-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.playlist-actions .btn-primary {
+  padding: 8px 16px;
+  font-size: 12px;
+}
+.playlist-actions #btn-delete-playlist {
+  padding: 8px 14px;
+  border: 1px solid rgba(255, 71, 87, 0.45);
+  border-radius: var(--r-full);
+  color: #ff6b76;
+  background: rgba(255, 71, 87, 0.08);
+}
+.playlist-actions #btn-delete-playlist:hover {
+  color: #fff;
+  background: rgba(255, 71, 87, 0.2);
+  border-color: rgba(255, 71, 87, 0.75);
+}
 
 .view-header h2 {
   font-size: 30px;
