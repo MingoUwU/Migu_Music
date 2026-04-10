@@ -91,6 +91,12 @@
         </div>
       </div>
 
+      <div class="perf-mode-wrap">
+        <button class="perf-mode-btn" id="btn-super-mode" title="Bật/tắt chế độ siêu tiết kiệm">
+          ⚡ Super tiết kiệm: OFF
+        </button>
+      </div>
+
       <div class="sidebar-footer">Made by Trung Nam</div>
     </aside>
 
@@ -424,7 +430,6 @@
         <div class="nowplaying-layout">
           <div class="np-left">
             <div class="visualizer-wrapper">
-              <div id="galaxy-container" style="display:none"></div>
               <div class="np-artwork-container">
                 <div class="np-disc" id="np-disc">
                   <canvas id="np-visualizer"></canvas>
@@ -461,13 +466,6 @@
                   <circle cx="18" cy="19" r="3" />
                   <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
                   <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
-                </svg>
-              </button>
-              <button class="np-action-btn" id="np-btn-menu" title="More">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <circle cx="12" cy="12" r="1" />
-                  <circle cx="19" cy="12" r="1" />
-                  <circle cx="5" cy="12" r="1" />
                 </svg>
               </button>
             </div>
@@ -668,7 +666,6 @@
   <!-- Audio Element -->
   <audio id="audio-player" preload="auto"></audio>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="js/app.js"></script>
 </body>

@@ -24,6 +24,9 @@
     activeQueueTab: 'personal',
     listeningHistory: [],
     activeListenSession: null,
+    lowPerformanceMode: false,
+    superSaverMode: false,
+    lastVisualizerFrameAt: 0,
   };
 
   let socket = null;
@@ -133,8 +136,10 @@
   }
 
   function init() {
+    detectPerformanceMode();
     checkServer();
     loadState();
+    setupPerformanceToggle();
     setupParticles();
     setupNavigation();
     setupSearch();
@@ -179,6 +184,63 @@
     }
   }
 
+  function detectPerformanceMode() {
+    const memory = Number(navigator.deviceMemory || 8);
+    const cores = Number(navigator.hardwareConcurrency || 4);
+    state.lowPerformanceMode = (memory <= 8) || (cores <= 4);
+
+    if (state.lowPerformanceMode) {
+      console.log(`[MiGu] Low performance mode ON (RAM:${memory}GB, CPU cores:${cores})`);
+    }
+  }
+
+  function isSuperMode() {
+    return !!state.superSaverMode;
+  }
+
+  function setupPerformanceToggle() {
+    const btn = $('#btn-super-mode');
+    if (!btn) return;
+
+    const refreshLabel = () => {
+      const on = isSuperMode();
+      btn.classList.toggle('on', on);
+      btn.textContent = on ? '⚡ Super tiết kiệm: ON' : '⚡ Super tiết kiệm: OFF';
+    };
+
+    refreshLabel();
+    btn.addEventListener('click', () => {
+      state.superSaverMode = !state.superSaverMode;
+      saveState();
+      refreshLabel();
+      setupParticles();
+
+      // Reset UI elements impacted by super mode
+      const suggest = $('#suggest-container');
+      if (suggest && state.superSaverMode) {
+        suggest.innerHTML = '<div class="empty-state small"><p>Đã tắt gợi ý để tiết kiệm hiệu năng</p></div>';
+      }
+      const rec = $('#recommended-container');
+      if (rec && state.superSaverMode) {
+        rec.innerHTML = '<div class="empty-state small" style="grid-column: 1 / -1;"><p>Super mode: tắt gợi ý cá nhân</p></div>';
+      }
+
+      toast(state.superSaverMode ? 'Đã bật Super tiết kiệm' : 'Đã tắt Super tiết kiệm', 'info');
+      if (state.superSaverMode && state.currentView === 'nowplaying') {
+        switchView('home');
+      }
+      if (syncHeartbeat) {
+        clearInterval(syncHeartbeat);
+        syncHeartbeat = setInterval(() => {
+          if (isRoomHost && roomChannel && roomCode) emitRoomState();
+        }, state.superSaverMode ? 7000 : 3000);
+      }
+      if (!state.superSaverMode) {
+        loadPersonalizedRecommendations();
+      }
+    });
+  }
+
   // ── Persistence ───────────────────────────────────────────────
   function loadState() {
     try {
@@ -193,6 +255,7 @@
         state.repeat = d.repeat || 'off';
         state.shuffle = d.shuffle || false;
         state.listeningHistory = Array.isArray(d.listeningHistory) ? d.listeningHistory.slice(-120) : [];
+        state.superSaverMode = !!d.superSaverMode;
       }
     } catch (e) { /* silent */ }
   }
@@ -235,6 +298,7 @@
         repeat: state.repeat,
         shuffle: state.shuffle,
         listeningHistory: state.listeningHistory.slice(-120),
+        superSaverMode: state.superSaverMode,
       }));
     } catch (e) { /* silent */ }
   }
@@ -500,7 +564,7 @@
       if (isRoomHost && roomChannel && roomCode) {
         emitRoomState();
       }
-    }, 3000);
+    }, isSuperMode() ? 7000 : 3000);
 
     roomChannel = supabase.channel(`room:${roomCode}`, {
       config: { presence: { key: myUserId } }
@@ -866,7 +930,14 @@
   function setupParticles() {
     const c = $('#particles');
     if (!c) return;
-    for (let i = 0; i < 25; i++) {
+    c.innerHTML = '';
+    if (isSuperMode()) {
+      c.style.display = 'none';
+      return;
+    }
+    c.style.display = '';
+    const particleCount = state.lowPerformanceMode ? 8 : 25;
+    for (let i = 0; i < particleCount; i++) {
       const p = document.createElement('div');
       p.className = 'particle';
       p.style.left = Math.random() * 100 + '%';
@@ -918,7 +989,7 @@
 
     if (view === 'search') setTimeout(() => $('#search-input')?.focus(), 100);
     if (view === 'favorites') renderFavoritesList();
-    if (view === 'home') loadPersonalizedRecommendations();
+    if (view === 'home' && !isSuperMode()) loadPersonalizedRecommendations();
 
     resetIdle();
   }
@@ -930,6 +1001,11 @@
     const sugBox = $('#suggestions-container');
 
     input.addEventListener('input', () => {
+      if (isSuperMode()) {
+        clear.style.display = input.value.trim() ? '' : 'none';
+        sugBox.style.display = 'none';
+        return;
+      }
       const q = input.value.trim();
       clear.style.display = q ? '' : 'none';
       clearTimeout(state.searchDebounce);
@@ -1281,6 +1357,7 @@
   }
 
   function updateDynamicBackdrop(url) {
+    if (state.lowPerformanceMode || isSuperMode()) return;
     const img = new Image();
     img.crossOrigin = "Anonymous";
     img.src = url;
@@ -1345,16 +1422,10 @@
     if (pbFav) { pbFav.classList.toggle('is-fav', isFav); if (isFav) pbFav.querySelector('svg')?.setAttribute('fill', 'var(--accent)'); else pbFav.querySelector('svg')?.setAttribute('fill', 'none'); }
   }
 
-  // ── Visualizer ────────────────────────────────────────────────
+  // ── Visualizer (2D only) ─────────────────────────────────────
   let audioCtx = null;
   let analyser = null;
   let source = null;
-
-  // Three.js Galaxy Variables
-  let gScene, gCamera, gRenderer, gParticles, gGeometry, gMaterial, gCore;
-  const starCount = 2800; // Even more stars!
-  let mouseX = 0, mouseY = 0;
-  let pulseIntensity = 0;
 
   function setupVisualizer() {
     const canvas = $('#np-visualizer');
@@ -1372,7 +1443,6 @@
       analyser.connect(audioCtx.destination);
       analyser.fftSize = 128;
 
-      if (state.visualizerMode === '3d') initGalaxy();
       drawVisualizer();
       window.removeEventListener('click', initCtx);
       window.removeEventListener('keydown', initCtx);
@@ -1381,40 +1451,19 @@
     window.addEventListener('click', initCtx);
     window.addEventListener('keydown', initCtx);
 
-    // Mouse movement for galaxy tilt
-    window.addEventListener('mousemove', (e) => {
-      const rect = $('#view-nowplaying')?.getBoundingClientRect();
-      if (rect) {
-        mouseX = (e.clientX - (rect.left + rect.width / 2)) / (rect.width / 2);
-        mouseY = (e.clientY - (rect.top + rect.height / 2)) / (rect.height / 2);
-      }
-    });
-
-    $('#np-btn-menu')?.addEventListener('click', () => toggleVisualizerMode());
-
-    // Initial UI state
-    if (state.visualizerMode === '3d') {
-      const container = $('.np-artwork-container');
-      if (container) {
-        container.style.opacity = '0';
-        container.style.transform = 'scale(0.8)';
-        container.style.pointerEvents = 'none';
-      }
-      $('#galaxy-container').style.display = 'block';
-    }
-
     function drawVisualizer() {
       if (!analyser) return;
       requestAnimationFrame(drawVisualizer);
+      if (isSuperMode()) return;
 
-      // Only render if we are in Now Playing view AND it is visible
-      const galaxy = $('#galaxy-container');
-      if (state.currentView !== 'nowplaying' || !galaxy || galaxy.offsetWidth === 0) return;
-
-      if (state.visualizerMode === '3d') {
-        updateGalaxy();
-        return;
+      if (state.lowPerformanceMode) {
+        const now = Date.now();
+        if (now - state.lastVisualizerFrameAt < 66) return; // ~15 FPS
+        state.lastVisualizerFrameAt = now;
       }
+
+      if (state.currentView !== 'nowplaying') return;
+      if (state.lowPerformanceMode && !state.isPlaying) return;
 
       const bufferLength = analyser.frequencyBinCount;
       const dataArray = new Uint8Array(bufferLength);
@@ -1445,201 +1494,6 @@
         ctx.stroke();
       }
     }
-  }
-
-  function initGalaxy() {
-    if (gRenderer) return;
-    const container = $('#galaxy-container');
-    const w = container.offsetWidth || 500;
-    const h = container.offsetHeight || 500;
-
-    gScene = new THREE.Scene();
-    gCamera = new THREE.PerspectiveCamera(60, w / h, 0.1, 1000);
-    gCamera.position.z = 6;
-
-    gRenderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
-    gRenderer.setPixelRatio(window.devicePixelRatio);
-    gRenderer.setSize(w, h);
-    container.appendChild(gRenderer.domElement);
-
-    // Create a circular glow texture
-    const canvas = document.createElement('canvas');
-    canvas.width = 64; canvas.height = 64;
-    const ctx = canvas.getContext('2d');
-    const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-    grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
-    grad.addColorStop(0.3, 'rgba(255, 255, 255, 0.9)');
-    grad.addColorStop(0.6, 'rgba(255, 255, 255, 0.2)');
-    grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, 64, 64);
-    const texture = new THREE.CanvasTexture(canvas);
-
-    gGeometry = new THREE.BufferGeometry();
-    const positions = new Float32Array(starCount * 3);
-    const colors = new Float32Array(starCount * 3);
-    const scales = new Float32Array(starCount);
-
-    const spiralArms = 3;
-    const armTightness = 0.5;
-
-    for (let i = 0; i < starCount; i++) {
-      const i3 = i * 3;
-      const radius = Math.random() * 5;
-      const spinAngle = radius * armTightness;
-      const branchAngle = (i % spiralArms) / spiralArms * Math.PI * 2;
-
-      const randomX = (Math.pow(Math.random(), 3) * (Math.random() < 0.5 ? 1 : -1) * 0.3) * radius;
-      const randomY = (Math.pow(Math.random(), 3) * (Math.random() < 0.5 ? 1 : -1) * 0.3) * radius;
-      const randomZ = (Math.pow(Math.random(), 3) * (Math.random() < 0.5 ? 1 : -1) * 0.3) * radius;
-
-      positions[i3] = Math.cos(branchAngle + spinAngle) * radius + randomX;
-      positions[i3 + 1] = randomY * 0.5;
-      positions[i3 + 2] = Math.sin(branchAngle + spinAngle) * radius + randomZ;
-
-      const mixedColor = new THREE.Color();
-      const colorInside = new THREE.Color('#ff0099');
-      const colorOutside = new THREE.Color('#00ccff');
-      mixedColor.lerpColors(colorInside, colorOutside, radius / 5);
-
-      colors[i3] = mixedColor.r;
-      colors[i3 + 1] = mixedColor.g;
-      colors[i3 + 2] = mixedColor.b;
-
-      scales[i] = Math.random();
-    }
-
-    gGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    gGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-
-    gMaterial = new THREE.PointsMaterial({
-      size: 0.18,
-      sizeAttenuation: true,
-      vertexColors: true,
-      transparent: true,
-      map: texture,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      opacity: 1
-    });
-
-    gParticles = new THREE.Points(gGeometry, gMaterial);
-    gScene.add(gParticles);
-
-    // Create a BRIGHTER center star
-    const coreGeom = new THREE.BufferGeometry();
-    coreGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array([0, 0, 0]), 3));
-    const coreMat = new THREE.PointsMaterial({
-      size: 3.5, // Even bigger
-      map: texture,
-      transparent: true,
-      blending: THREE.AdditiveBlending,
-      color: 0xffffff,
-      depthWrite: false,
-      opacity: 1
-    });
-    gCore = new THREE.Points(coreGeom, coreMat);
-    gScene.add(gCore);
-
-    // Robust Resize handling using ResizeObserver
-    const ro = new ResizeObserver(() => {
-      const w = container.offsetWidth || 500;
-      const h = container.offsetHeight || 500;
-      if (w > 0 && h > 0) {
-        gRenderer.setSize(w, h);
-        gCamera.aspect = w / h;
-        gCamera.updateProjectionMatrix();
-        console.log('[MiGu] 3D Visualizer Adaptive Resize:', w, 'x', h);
-      }
-    });
-    ro.observe(container);
-  }
-
-  function updateGalaxy() {
-    if (!analyser || !gParticles) return;
-    const dataArray = new Uint8Array(analyser.frequencyBinCount);
-    analyser.getByteFrequencyData(dataArray);
-
-    let average = 0;
-    for (let i = 0; i < 16; i++) average += dataArray[i]; // Bass
-    average /= 16;
-
-    // Bass Detection for "Supernova" Pulse
-    if (average > 210) pulseIntensity = 1.0;
-    else pulseIntensity *= 0.92; // Decay
-
-    const lerpPulse = (average / 255);
-    const targetScale = (1 + lerpPulse * 0.8) + pulseIntensity * 0.6;
-
-    gParticles.scale.set(
-      THREE.MathUtils.lerp(gParticles.scale.x, targetScale, 0.1),
-      THREE.MathUtils.lerp(gParticles.scale.y, targetScale, 0.1),
-      THREE.MathUtils.lerp(gParticles.scale.z, targetScale, 0.1)
-    );
-
-    // Dynamic Core Pulse & Color
-    if (gCore) {
-      gCore.material.size = 3.5 + pulseIntensity * 5; // Surge more!
-      gCore.material.opacity = 1;
-
-      // Lerp color between Pink and Cyan
-      const c1 = new THREE.Color('#ff0099');
-      const c2 = new THREE.Color('#00ccff');
-      gCore.material.color.lerpColors(c1, c2, 0.5 + (Math.sin(Date.now() * 0.002) * 0.5));
-
-      // More dramatic flash
-      if (pulseIntensity > 0.7) gCore.material.color.set('#ffffff');
-    }
-
-    // Interaction & Rotation
-    gParticles.rotation.y += 0.003 + lerpPulse * 0.02 + pulseIntensity * 0.05;
-
-    // Mouse Gravity Tilt
-    const targetRotX = 0.5 + lerpPulse * 0.3 + (mouseY * 0.4);
-    const targetRotY = (mouseX * 0.4);
-
-    gParticles.rotation.x = THREE.MathUtils.lerp(gParticles.rotation.x, targetRotX, 0.05);
-    gParticles.rotation.z = THREE.MathUtils.lerp(gParticles.rotation.z, targetRotY, 0.05);
-
-    gRenderer.render(gScene, gCamera);
-  }
-
-  function toggleVisualizerMode() {
-    state.visualizerMode = state.visualizerMode === '2d' ? '3d' : '2d';
-    localStorage.setItem('migu-vmode', state.visualizerMode);
-
-    const disc = $('#np-disc');
-    const galaxy = $('#galaxy-container');
-    const container = $('.np-artwork-container');
-
-    if (state.visualizerMode === '3d') {
-      if (container) {
-        container.style.opacity = '0';
-        container.style.transform = 'scale(0.8)';
-      }
-      setTimeout(() => {
-        if (disc) disc.style.display = 'none';
-        galaxy.style.display = 'block';
-        if (!gRenderer) initGalaxy();
-        else {
-          const w = galaxy.offsetWidth || 500;
-          const h = galaxy.offsetHeight || 500;
-          gRenderer.setSize(w, h);
-          gCamera.aspect = w / h;
-          gCamera.updateProjectionMatrix();
-        }
-      }, 500);
-    } else {
-      galaxy.style.display = 'none';
-      if (disc) disc.style.display = 'flex';
-      setTimeout(() => {
-        if (container) {
-          container.style.opacity = '1';
-          container.style.transform = 'scale(1)';
-        }
-      }, 50);
-    }
-    toast(`Chế độ: ${state.visualizerMode === '3d' ? 'Vũ trụ 3D' : 'Đĩa xoay 2D'}`, 'info');
   }
 
   // ── Player Controls ───────────────────────────────────────────
@@ -2096,6 +1950,10 @@
   async function loadRecommendations(videoId) {
     const container = $('#suggest-container');
     if (!container) return;
+    if (isSuperMode()) {
+      container.innerHTML = '<div class="empty-state small"><p>Super mode: tắt gợi ý để tiết kiệm hiệu năng</p></div>';
+      return;
+    }
     container.innerHTML = '<div class="loading-spinner"><div class="spinner"></div></div>';
 
     try {
@@ -2150,7 +2008,8 @@
         return;
       }
 
-      container.innerHTML = data.results.map(song => renderSongCard(song)).join('');
+      const rows = isSuperMode() ? data.results.slice(0, 8) : data.results;
+      container.innerHTML = rows.map(song => renderSongCard(song)).join('');
       bindSongCards(container);
     } catch (err) {
       container.innerHTML = '<div class="empty-state small"><p>Không tải được nhạc thịnh hành</p></div>';
@@ -2160,6 +2019,10 @@
   async function loadPersonalizedRecommendations() {
     const container = $('#recommended-container');
     if (!container) return;
+    if (isSuperMode()) {
+      container.innerHTML = '<div class="empty-state small" style="grid-column: 1 / -1;"><p>Super mode: tắt gợi ý cá nhân</p></div>';
+      return;
+    }
     seedHistoryFromQueueIfNeeded();
 
     if (!state.listeningHistory || state.listeningHistory.length < 3) {
