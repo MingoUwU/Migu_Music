@@ -26,6 +26,7 @@
     activeListenSession: null,
     lowPerformanceMode: false,
     superSaverMode: false,
+    mixTransitionSeconds: 0,
     lastVisualizerFrameAt: 0,
   };
 
@@ -200,15 +201,44 @@
 
   function setupPerformanceToggle() {
     const btn = $('#btn-super-mode');
+    const mixBtn = $('#btn-mix-mode');
     if (!btn) return;
+
+    const refreshMixLabel = () => {
+      if (!mixBtn) return;
+      const sec = Number(state.mixTransitionSeconds || 0);
+      const superOn = isSuperMode();
+      mixBtn.classList.toggle('disabled', superOn);
+      mixBtn.disabled = superOn;
+      mixBtn.textContent = superOn
+        ? '🎚 Mix chuyển bài: OFF (Super mode)'
+        : (sec > 0 ? `🎚 Mix chuyển bài: ON (${sec}s)` : '🎚 Mix chuyển bài: OFF');
+    };
 
     const refreshLabel = () => {
       const on = isSuperMode();
       btn.classList.toggle('on', on);
       btn.textContent = on ? '⚡ Super tiết kiệm: ON' : '⚡ Super tiết kiệm: OFF';
+      refreshMixLabel();
     };
 
     refreshLabel();
+    if (mixBtn) {
+      mixBtn.addEventListener('click', () => {
+        if (isSuperMode()) return;
+        const cycle = [0, 2, 4];
+        const idx = cycle.indexOf(Number(state.mixTransitionSeconds || 0));
+        state.mixTransitionSeconds = cycle[(idx + 1) % cycle.length];
+        saveState();
+        refreshMixLabel();
+        toast(
+          state.mixTransitionSeconds > 0
+            ? `Bật mix chuyển bài ${state.mixTransitionSeconds}s`
+            : 'Đã tắt mix chuyển bài',
+          'info'
+        );
+      });
+    }
     btn.addEventListener('click', () => {
       state.superSaverMode = !state.superSaverMode;
       saveState();
@@ -256,6 +286,7 @@
         state.shuffle = d.shuffle || false;
         state.listeningHistory = Array.isArray(d.listeningHistory) ? d.listeningHistory.slice(-120) : [];
         state.superSaverMode = !!d.superSaverMode;
+        state.mixTransitionSeconds = Number(d.mixTransitionSeconds || 0);
       }
     } catch (e) { /* silent */ }
   }
@@ -299,6 +330,7 @@
         shuffle: state.shuffle,
         listeningHistory: state.listeningHistory.slice(-120),
         superSaverMode: state.superSaverMode,
+        mixTransitionSeconds: state.mixTransitionSeconds,
       }));
     } catch (e) { /* silent */ }
   }
@@ -1497,7 +1529,93 @@
   }
 
   // ── Player Controls ───────────────────────────────────────────
+  let playbackWatchdogTimer = null;
+  let watchdogStallMs = 0;
+  let watchdogPrevTime = 0;
+  let endTransitionLock = false;
+  let stallRecoverAttempts = 0;
+  let pendingResumeTime = null;
+  let mixTransitionActive = false;
+  let mixFadeTimer = null;
+
   function setupPlayerControls() {
+    const getActiveMixSeconds = () => (isSuperMode() ? 0 : Number(state.mixTransitionSeconds || 0));
+
+    const clearMixTimers = () => {
+      mixTransitionActive = false;
+      if (mixFadeTimer) {
+        clearInterval(mixFadeTimer);
+        mixFadeTimer = null;
+      }
+    };
+
+    const startSimpleMixTransition = () => {
+      if (mixTransitionActive) return;
+      const mixSec = getActiveMixSeconds();
+      if (mixSec <= 0) return;
+      if (state.repeat === 'one') return;
+      if (!state.queue || state.queue.length < 2) return;
+      if (state.currentIndex < 0 || state.currentIndex >= state.queue.length - 1) return;
+
+      mixTransitionActive = true;
+      const targetVol = state.volume / 100;
+      // Keep transition short so we always switch before true end.
+      const totalMs = Math.max(350, Math.floor(mixSec * 650));
+      const stepMs = 100;
+      const steps = Math.max(1, Math.floor(totalMs / stepMs));
+      let i = 0;
+      const startVol = Math.max(0, Math.min(1, audio.volume));
+
+      mixFadeTimer = setInterval(() => {
+        i++;
+        audio.volume = Math.max(0, startVol * (1 - i / steps));
+        if (i < steps) return;
+
+        clearInterval(mixFadeTimer);
+        mixFadeTimer = null;
+        nextTrack();
+
+        setTimeout(() => {
+          let j = 0;
+          const inSteps = Math.max(1, Math.floor((totalMs * 0.75) / stepMs));
+          audio.volume = 0;
+          const inTimer = setInterval(() => {
+            j++;
+            audio.volume = Math.min(targetVol, targetVol * (j / inSteps));
+            if (j >= inSteps) {
+              clearInterval(inTimer);
+              audio.volume = targetVol;
+              mixTransitionActive = false;
+            }
+          }, stepMs);
+        }, 120);
+      }, stepMs);
+    };
+
+    const handleTrackEnded = (fromWatchdog = false) => {
+      if (endTransitionLock) return;
+      endTransitionLock = true;
+      clearMixTimers();
+
+      if (state.currentSongInfo) recordListeningSnapshot(state.currentSongInfo, true);
+      state.isPlaying = false;
+      updatePlayBtns(false);
+      emitRoomState({ isPlaying: false });
+
+      if (state.repeat === 'one') {
+        audio.currentTime = 0;
+        audio.play().then(() => {
+          state.isPlaying = true;
+          updatePlayBtns(true);
+        }).catch(() => { });
+      } else {
+        if (fromWatchdog) console.warn('[MiGu] Watchdog forced track end transition.');
+        nextTrack();
+      }
+
+      setTimeout(() => { endTransitionLock = false; }, 400);
+    };
+
     const toggle = () => {
       if (!audio.src) return;
       if (state.isPlaying) {
@@ -1573,6 +1691,9 @@
     // Audio events
     audio.addEventListener('timeupdate', () => {
       if (!audio.duration) return;
+      watchdogPrevTime = audio.currentTime;
+      watchdogStallMs = 0;
+      stallRecoverAttempts = 0;
       const pct = (audio.currentTime / audio.duration) * 100;
       const npFill = $('#np-progress-fill');
       const pbFill = $('#pb-progress-fill');
@@ -1581,17 +1702,20 @@
       $('#np-current-time').textContent = fmtDur(audio.currentTime);
       $('#np-duration').textContent = fmtDur(audio.duration);
       $('#pb-time').textContent = `${fmtDur(audio.currentTime)} / ${fmtDur(audio.duration)}`;
+
+      const mixSec = getActiveMixSeconds();
+      if (mixSec > 0 && !mixTransitionActive) {
+        const remaining = Number(audio.duration - audio.currentTime);
+        // Trigger earlier than configured duration to avoid "end first, then switch" feel.
+        const triggerWindow = mixSec + 1.25;
+        if (remaining <= triggerWindow && remaining > 0.2) {
+          startSimpleMixTransition();
+        }
+      }
     });
 
     audio.addEventListener('ended', () => {
-      if (state.currentSongInfo) recordListeningSnapshot(state.currentSongInfo, true);
-      state.isPlaying = false;
-      updatePlayBtns(false);
-      emitRoomState({ isPlaying: false });
-      if (state.repeat === 'one') {
-        audio.currentTime = 0;
-        audio.play().then(() => { state.isPlaying = true; updatePlayBtns(true); });
-      } else nextTrack();
+      handleTrackEnded(false);
     });
 
     audio.addEventListener('error', (e) => {
@@ -1606,6 +1730,62 @@
         }
       }, 2000);
     });
+
+    audio.addEventListener('loadedmetadata', () => {
+      if (pendingResumeTime !== null && Number.isFinite(pendingResumeTime)) {
+        try {
+          audio.currentTime = Math.max(0, Math.min(pendingResumeTime, (audio.duration || pendingResumeTime)));
+        } catch (_) { }
+        pendingResumeTime = null;
+      }
+    });
+
+    // Failsafe: some streams stall near end and never emit "ended"
+    if (playbackWatchdogTimer) clearInterval(playbackWatchdogTimer);
+    playbackWatchdogTimer = setInterval(() => {
+      if (!state.isPlaying || !audio.src) return;
+      const dur = Number(audio.duration || 0);
+      if (!Number.isFinite(dur) || dur <= 0) return;
+
+      const cur = Number(audio.currentTime || 0);
+      const remaining = dur - cur;
+      const progressed = Math.abs(cur - watchdogPrevTime) > 0.02;
+
+      if (progressed) {
+        watchdogStallMs = 0;
+        watchdogPrevTime = cur;
+        return;
+      }
+
+      watchdogStallMs += 1000;
+
+      // Mid-song stall recovery: refresh stream and resume from stuck timestamp
+      if (remaining > 2.2 && watchdogStallMs >= 8000) {
+        if (stallRecoverAttempts < 2 && state.currentSongInfo?.videoId) {
+          stallRecoverAttempts++;
+          const resumeAt = Math.max(0, cur - 0.3);
+          pendingResumeTime = resumeAt;
+          const vid = encodeURIComponent(state.currentSongInfo.videoId);
+          audio.src = `/api/stream/${vid}?recover=${Date.now()}&r=${stallRecoverAttempts}`;
+          audio.load();
+          audio.play().then(() => {
+            state.isPlaying = true;
+            updatePlayBtns(true);
+          }).catch(() => { });
+          watchdogStallMs = 0;
+          return;
+        }
+
+        // Recovery exhausted -> skip to avoid permanent freeze
+        handleTrackEnded(true);
+        return;
+      }
+
+      // If the stream freezes anywhere in the last 10 seconds, force next track.
+      if (remaining <= 10 && watchdogStallMs >= 3500) {
+        handleTrackEnded(true);
+      }
+    }, 1000);
 
     // Favorite buttons
     $('#np-toggle-fav')?.addEventListener('click', () => {

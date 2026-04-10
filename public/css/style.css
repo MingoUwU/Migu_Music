@@ -243,6 +243,9 @@ img    { display: block; max-width: 100%; }
 
 .perf-mode-wrap {
   padding: 8px 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .perf-mode-btn {
@@ -266,6 +269,11 @@ img    { display: block; max-width: 100%; }
   color: #fff3cf;
   background: rgba(255, 89, 0, 0.18);
   border-color: rgba(255, 89, 0, 0.45);
+}
+
+.perf-mode-btn.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* ── Main Content ─────────────────────────────────────────────── */
