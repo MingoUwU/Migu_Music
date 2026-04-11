@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════
-   MiGu Music Player v2.1.3 — iOS 26 Liquid Glass Edition
+   MiGu Music Player v2.1.4 — iOS 26 Liquid Glass Edition
    ═══════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -2588,8 +2588,8 @@
             notes = notes.slice(0, 800);
             const extra = notes ? `\n\n${notes}` : '';
             await showConfirmModal({
-              title: `Có bản cập nhật mới — v${ev.version || '?'}`,
-              message: `Ứng dụng đang tải bản cài mới tự động. Sau khi tải xong bạn sẽ được hỏi có muốn khởi động lại không.${extra}`,
+              title: `MiGu Music — Bản mới v${ev.version || '?'}`,
+              message: `MiGu Music đang tải bản cài mới tự động. Xong sẽ hỏi có muốn khởi động lại không.${extra}`,
               confirmText: 'Đã hiểu',
               cancelText: 'Đóng',
             });
@@ -2598,13 +2598,13 @@
         case 'progress':
           if (ev.percent >= 99 || ev.percent - lastUpdaterProgressToast >= 18) {
             lastUpdaterProgressToast = ev.percent;
-            toast(`Đang tải cập nhật: ${ev.percent}%`, 'info');
+            toast(`MiGu Music — đang tải cập nhật: ${ev.percent}%`, 'info');
           }
           break;
         case 'downloaded': {
           const ok = await showConfirmModal({
-            title: 'Cập nhật đã tải xong',
-            message: `Phiên bản ${ev.version || 'mới'} đã sẵn sàng. Khởi động lại MiGu Music để hoàn tất cài đặt?`,
+            title: 'MiGu Music — Cập nhật đã tải xong',
+            message: `MiGu Music v${ev.version || 'mới'} đã sẵn sàng. Khởi động lại để hoàn tất cài đặt?`,
             confirmText: 'Khởi động lại',
             cancelText: 'Để sau',
           });
@@ -2619,7 +2619,7 @@
           break;
         case 'error':
           await showConfirmModal({
-            title: 'Không kiểm tra / tải được cập nhật',
+            title: 'MiGu Music — Lỗi cập nhật',
             message: ev.message || 'Lỗi không xác định.',
             confirmText: 'Đóng',
             cancelText: 'Đóng',

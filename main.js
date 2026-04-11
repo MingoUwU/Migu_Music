@@ -1,6 +1,7 @@
 const { app, BrowserWindow, Tray, Menu, nativeImage, dialog } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
+const fs = require('fs');
 const net = require('net');
 const { ipcMain } = require('electron');
 const DiscordRPC = require('discord-rpc');
@@ -319,22 +320,38 @@ autoUpdater.on('download-progress', (progressObj) => {
 
 autoUpdater.on('update-downloaded', (info) => {
   console.log('[Updater] Update downloaded', info.version);
+  const appName = app.getName() || 'MiGu Music';
   sendUpdateEvent({ type: 'downloaded', version: info.version });
+
   if (mainWindow && !mainWindow.isDestroyed()) {
+    try {
+      if (!mainWindow.isVisible()) mainWindow.show();
+      mainWindow.focus();
+    } catch (_) { /* ignore */ }
     mainWindow.webContents.send(
       'update-msg',
-      `Bản v${info.version} đã tải xong. Mở thông báo trong app hoặc khởi động lại để cài đặt.`
+      `${appName}: Đã tải xong bản v${info.version} — xem hộp thoại trong cửa sổ ${appName}.`
     );
     return;
   }
+
+  let boxIcon = undefined;
+  try {
+    if (ICON_PATH && fs.existsSync(ICON_PATH)) {
+      boxIcon = nativeImage.createFromPath(ICON_PATH);
+    }
+  } catch (_) { /* ignore */ }
+
   dialog
     .showMessageBox({
       type: 'info',
-      title: 'Cập nhật sẵn sàng',
-      message: `Phiên bản mới (${info.version}) đã tải xong. Khởi động lại để cập nhật?`,
-      buttons: ['Cập nhật ngay', 'Để sau'],
+      title: `${appName} — Cập nhật sẵn sàng`,
+      message: `${appName} có phiên bản mới (${info.version}) đã được tải về.`,
+      detail: 'Khởi động lại MiGu Music để hoàn tất cài đặt.',
+      buttons: ['Khởi động lại & cập nhật', 'Để sau'],
       defaultId: 0,
       cancelId: 1,
+      ...(boxIcon ? { icon: boxIcon } : {}),
     })
     .then((result) => {
       if (result.response === 0) {
