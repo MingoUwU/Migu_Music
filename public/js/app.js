@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════
-   MiGu Music Player v2.0.8 — iOS 26 Liquid Glass Edition
+   MiGu Music Player v2.0.9 — iOS 26 Liquid Glass Edition
    ═══════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -157,9 +157,10 @@
     const p = $('#greeting-sub');
     if (h2) h2.textContent = text;
     if (p) p.textContent = sub;
-    if (window.electronAPI && window.electronAPI.onUpdateMsg) {
-      window.electronAPI.onUpdateMsg((msg) => toast(msg, 'info'));
-      // Signal ready to main process
+    if (window.electronAPI?.onUpdateEvent) {
+      setupElectronUpdaterUI();
+    }
+    if (window.electronAPI?.signalReady) {
       window.electronAPI.signalReady();
     }
   }
@@ -2540,6 +2541,75 @@
         }
       };
       overlay.addEventListener('click', onOverlayClick);
+    });
+  }
+
+  let lastUpdaterProgressToast = -1;
+
+  function setupElectronUpdaterUI() {
+    if (!window.electronAPI?.onUpdateEvent) return;
+    window.electronAPI.onUpdateEvent(async (ev) => {
+      if (!ev || !ev.type) return;
+      switch (ev.type) {
+        case 'dev-mode':
+          toast(ev.message || 'Bản dev không kiểm tra cập nhật từ GitHub.', 'info');
+          break;
+        case 'checking':
+          break;
+        case 'available':
+          lastUpdaterProgressToast = -1;
+          {
+            let notes = '';
+            if (typeof ev.releaseNotes === 'string') notes = ev.releaseNotes.trim();
+            else if (Array.isArray(ev.releaseNotes)) {
+              notes = ev.releaseNotes
+                .map((n) => (typeof n === 'string' ? n : n && (n.body || n.note || '')))
+                .filter(Boolean)
+                .join('\n')
+                .trim();
+            }
+            notes = notes.slice(0, 800);
+            const extra = notes ? `\n\n${notes}` : '';
+            await showConfirmModal({
+              title: `Có bản cập nhật mới — v${ev.version || '?'}`,
+              message: `Ứng dụng đang tải bản cài mới tự động. Sau khi tải xong bạn sẽ được hỏi có muốn khởi động lại không.${extra}`,
+              confirmText: 'Đã hiểu',
+              cancelText: 'Đóng',
+            });
+          }
+          break;
+        case 'progress':
+          if (ev.percent >= 99 || ev.percent - lastUpdaterProgressToast >= 18) {
+            lastUpdaterProgressToast = ev.percent;
+            toast(`Đang tải cập nhật: ${ev.percent}%`, 'info');
+          }
+          break;
+        case 'downloaded': {
+          const ok = await showConfirmModal({
+            title: 'Cập nhật đã tải xong',
+            message: `Phiên bản ${ev.version || 'mới'} đã sẵn sàng. Khởi động lại MiGu Music để hoàn tất cài đặt?`,
+            confirmText: 'Khởi động lại',
+            cancelText: 'Để sau',
+          });
+          if (ok && window.electronAPI.quitAndInstall) window.electronAPI.quitAndInstall();
+          break;
+        }
+        case 'not-available':
+          if (ev.fromManual) {
+            toast(`Bạn đang dùng phiên bản mới nhất (${ev.version || ''}).`, 'success');
+          }
+          break;
+        case 'error':
+          await showConfirmModal({
+            title: 'Không kiểm tra / tải được cập nhật',
+            message: ev.message || 'Lỗi không xác định.',
+            confirmText: 'Đóng',
+            cancelText: 'Đóng',
+          });
+          break;
+        default:
+          break;
+      }
     });
   }
 

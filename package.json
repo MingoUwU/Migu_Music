@@ -1,6 +1,6 @@
 {
   "name": "migu-music",
-  "version": "2.0.8",
+  "version": "2.0.9",
   "author": "TrungNam",
   "description": "MiGu Music Player",
   "main": "main.js",
@@ -13,11 +13,13 @@
     "dev": "electron .",
     "server": "node server.js",
     "build": "electron-builder --win",
-    "pack": "electron-builder --win --dir"
+    "pack": "electron-builder --win --dir",
+    "release": "electron-builder --win --publish always"
   },
   "build": {
     "appId": "com.migu.music",
     "productName": "MiGu Music",
+    "artifactName": "MiGu-Music-Setup-${version}.${ext}",
     "copyright": "Copyright © 2024 MingoUwU",
     "directories": {
       "output": "dist"
