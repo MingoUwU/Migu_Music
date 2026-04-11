@@ -253,21 +253,33 @@
     const mixBtn = $('#btn-mix-mode');
     if (!btn) return;
 
+    const mixMeta = mixBtn?.querySelector('[data-mix-meta]');
+    const superMeta = btn.querySelector('[data-super-meta]');
+
     const refreshMixLabel = () => {
       if (!mixBtn) return;
       const sec = Number(state.mixTransitionSeconds || 0);
       const superOn = isSuperMode();
-      mixBtn.classList.toggle('disabled', superOn);
+      mixBtn.classList.toggle('is-locked', superOn);
+      mixBtn.classList.toggle('is-active', sec > 0 && !superOn);
       mixBtn.disabled = superOn;
-      mixBtn.textContent = superOn
-        ? '🎚 Mix chuyển bài: OFF (Super mode)'
-        : (sec > 0 ? `🎚 Mix chuyển bài: ON (${sec}s)` : '🎚 Mix chuyển bài: OFF');
+      if (mixMeta) {
+        mixMeta.textContent = superOn
+          ? 'Tạm khoá khi Super đang bật'
+          : sec > 0
+            ? `Đang mix ${sec}s — nhấn để đổi`
+            : 'Tắt — nhấn để 2s / 4s';
+      }
     };
 
     const refreshLabel = () => {
       const on = isSuperMode();
-      btn.classList.toggle('on', on);
-      btn.textContent = on ? '⚡ Super tiết kiệm: ON' : '⚡ Super tiết kiệm: OFF';
+      btn.classList.toggle('is-active', on);
+      if (superMeta) {
+        superMeta.textContent = on
+          ? 'Đang bật · gợi ý & hiệu ứng tắt'
+          : 'Tắt — nhấn để tiết kiệm RAM/CPU';
+      }
       refreshMixLabel();
     };
 

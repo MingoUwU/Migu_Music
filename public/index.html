@@ -92,15 +92,27 @@
       </div>
 
       <div class="perf-mode-wrap">
-        <button class="perf-mode-btn" id="btn-mix-mode" title="Bật/tắt mix chuyển bài">
-          🎚 Mix chuyển bài: OFF
+        <button type="button" class="perf-mode-card" id="btn-mix-mode" title="Nhấn để chuyển 0s → 2s → 4s mix">
+          <span class="perf-mode-shimmer" aria-hidden="true"></span>
+          <span class="perf-mode-emoji" aria-hidden="true">🎚</span>
+          <div class="perf-mode-copy">
+            <span class="perf-mode-title">Mix chuyển bài</span>
+            <span class="perf-mode-meta" data-mix-meta>—</span>
+          </div>
+          <span class="perf-switch" aria-hidden="true"><span class="perf-switch__knob"></span></span>
         </button>
-        <button class="perf-mode-btn" id="btn-super-mode" title="Bật/tắt chế độ siêu tiết kiệm">
-          ⚡ Super tiết kiệm: OFF
+        <button type="button" class="perf-mode-card perf-mode-card--super" id="btn-super-mode" title="Giảm hiệu ứng & gợi ý để nhẹ máy">
+          <span class="perf-mode-shimmer perf-mode-shimmer--volt" aria-hidden="true"></span>
+          <span class="perf-mode-emoji" aria-hidden="true">⚡</span>
+          <div class="perf-mode-copy">
+            <span class="perf-mode-title">Super tiết kiệm</span>
+            <span class="perf-mode-meta" data-super-meta>—</span>
+          </div>
+          <span class="perf-switch perf-switch--super" aria-hidden="true"><span class="perf-switch__knob"></span></span>
         </button>
       </div>
 
-      <div class="sidebar-footer">Made by Trung Nam</div>
+      <div class="sidebar-footer"><span class="sidebar-footer-glow">Made by Trung Nam</span></div>
     </aside>
 
     <!-- ─── Main ─────────────────────────────────────────── -->
