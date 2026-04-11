@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════
-   MiGu Music Player v2.0.7 — iOS 26 Liquid Glass Edition
+   MiGu Music Player v2.0.8 — iOS 26 Liquid Glass Edition
    ═══════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -55,6 +55,36 @@
   const $$ = (sel) => document.querySelectorAll(sel);
   const audio = $('#audio-player');
 
+  /** Next/prev/end-of-track navigation: host uses room queue, everyone else uses personal queue. */
+  function getActivePlaybackQueue() {
+    if (roomCode && isRoomHost) return state.roomQueue;
+    return state.queue;
+  }
+
+  /** Hard seek only when very far off (rare); softer path uses playbackRate. */
+  let lastDriftCorrectionAt = 0;
+  let syncPlaybackRateResetTimer = null;
+
+  function resetGuestSyncPlaybackRate() {
+    if (syncPlaybackRateResetTimer) {
+      clearTimeout(syncPlaybackRateResetTimer);
+      syncPlaybackRateResetTimer = null;
+    }
+    try {
+      if (audio) audio.playbackRate = 1;
+    } catch (_) { /* ignore */ }
+  }
+
+  function scheduleGuestPlaybackRateReset(ms = 4500) {
+    if (syncPlaybackRateResetTimer) clearTimeout(syncPlaybackRateResetTimer);
+    syncPlaybackRateResetTimer = setTimeout(() => {
+      syncPlaybackRateResetTimer = null;
+      try {
+        if (audio) audio.playbackRate = 1;
+      } catch (_) { /* ignore */ }
+    }, ms);
+  }
+
   const SVG = {
     play: '<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6 3 20 12 6 21 6 3"/></svg>',
     pause: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>',
@@ -63,16 +93,16 @@
   // ── Permissions ───────────────────────────────────────────────
   function applyHostPermissions() {
     const isGuest = roomCode && !isRoomHost;
+    const seekOk = canScrubTimeline();
 
-    // Disable interactions if guest (Only disable playback controls)
-    const targetSelectors = [
-      '#np-btn-play', '#np-btn-prev', '#np-btn-next', '#np-progress-bar',
+    const transportSelectors = [
+      '#np-btn-play', '#np-btn-prev', '#np-btn-next',
       '#np-btn-shuffle', '#np-btn-repeat',
-      '#pb-play', '#pb-prev', '#pb-next', '#pb-progress',
-      '#room-btn-play', '#room-btn-prev', '#room-btn-next'
+      '#pb-play', '#pb-prev', '#pb-next',
+      '#room-btn-play', '#room-btn-prev', '#room-btn-next',
     ];
 
-    targetSelectors.forEach(sel => {
+    transportSelectors.forEach((sel) => {
       const el = $(sel);
       if (!el) return;
       if (isGuest) {
@@ -81,6 +111,21 @@
       } else {
         el.style.pointerEvents = 'auto';
         el.style.opacity = '1';
+      }
+    });
+
+    ['#np-progress-bar', '#pb-progress'].forEach((sel) => {
+      const el = $(sel);
+      if (!el) return;
+      if (!seekOk) {
+        el.style.pointerEvents = 'none';
+        el.style.opacity = isGuest ? '0.35' : '1';
+        el.title =
+          'Trong phòng không tua thanh — dùng Next/Prev và Play (host). Tránh spam vị trí, lag cả phòng.';
+      } else {
+        el.style.pointerEvents = 'auto';
+        el.style.opacity = '1';
+        el.removeAttribute('title');
       }
     });
 
@@ -263,7 +308,7 @@
         clearInterval(syncHeartbeat);
         syncHeartbeat = setInterval(() => {
           if (isRoomHost && roomChannel && roomCode) emitRoomState();
-        }, state.superSaverMode ? 7000 : 3000);
+        }, state.superSaverMode ? 8000 : 5500);
       }
       if (!state.superSaverMode) {
         loadPersonalizedRecommendations();
@@ -414,6 +459,7 @@
       renderQueue();
 
       if (syncHeartbeat) { clearInterval(syncHeartbeat); syncHeartbeat = null; }
+      resetGuestSyncPlaybackRate();
       $('#room-setup-panel').style.display = 'block';
       $('#room-active-panel').style.display = 'none';
       applyHostPermissions();
@@ -432,6 +478,7 @@
     $('#host-sync-mode')?.addEventListener('change', (e) => {
       if (isRoomHost) {
         emitRoomState({ syncMode: e.target.checked ? 'sync' : 'start' });
+        applyHostPermissions();
         toast(e.target.checked ? 'Đã bật ép đồng bộ' : 'Người nghe tự do', 'info');
       }
     });
@@ -491,6 +538,11 @@
     const sm = $('#host-sync-mode');
     const mode = (sm && isRoomHost) ? (sm.checked ? 'sync' : 'start') : (window.userSyncChoice || 'sync');
     return roomCode && mode === 'sync';
+  }
+
+  /** In room nobody scrubs — host/guest. Tua gửi currentTime liên tục, gây lag; chỉ next/prev/play/volume. */
+  function canScrubTimeline() {
+    return !roomCode;
   }
 
   function setupGlobalLobby() {
@@ -596,7 +648,7 @@
       if (isRoomHost && roomChannel && roomCode) {
         emitRoomState();
       }
-    }, isSuperMode() ? 7000 : 3000);
+    }, isSuperMode() ? 8000 : 5500);
 
     roomChannel = supabase.channel(`room:${roomCode}`, {
       config: { presence: { key: myUserId } }
@@ -729,13 +781,67 @@
     isProcessingRoomSync = true;
 
     if (update.queue !== undefined) {
-      if (update.queue.length > state.roomQueue.length && state.roomQueue.length > 0) {
-        const newSong = update.queue[update.queue.length - 1];
-        if (newSong) toast(`Bài mới được thêm: ${newSong.title}`, 'success');
+      const prevRoomQueueLen = state.roomQueue.length;
+      const incoming = Array.isArray(update.queue) ? update.queue : [];
+
+      if (isRoomHost && update.senderId !== myUserId) {
+        const curVid = state.currentSongInfo?.videoId;
+        const guestMissingNowPlaying =
+          !!(curVid && !incoming.some((s) => s && s.videoId === curVid));
+
+        if (guestMissingNowPlaying) {
+          // Guest queue is behind (e.g. host skipped next). Do not replace — would drop the live track from the list.
+          const hostIds = new Set(
+            state.roomQueue.map((s) => s && s.videoId).filter(Boolean)
+          );
+          let appended = false;
+          for (const s of incoming) {
+            if (s && s.videoId && !hostIds.has(s.videoId)) {
+              state.roomQueue.push(s);
+              hostIds.add(s.videoId);
+              appended = true;
+            }
+          }
+          if (appended) {
+            const ns = state.roomQueue[state.roomQueue.length - 1];
+            if (ns) toast(`Bài mới được thêm: ${ns.title}`, 'success');
+          }
+          emitRoomState({}, true);
+        } else {
+          if (incoming.length > state.roomQueue.length && state.roomQueue.length > 0) {
+            const newSong = incoming[incoming.length - 1];
+            if (newSong) toast(`Bài mới được thêm: ${newSong.title}`, 'success');
+          }
+          state.roomQueue = incoming.slice();
+        }
+      } else if (!isRoomHost) {
+        if (incoming.length > state.roomQueue.length && state.roomQueue.length > 0) {
+          const newSong = incoming[incoming.length - 1];
+          if (newSong) toast(`Bài mới được thêm: ${newSong.title}`, 'success');
+        }
+        state.roomQueue = incoming.slice();
       }
-      state.roomQueue = update.queue;
+
       if (state.activeQueueTab === 'room') renderQueue();
       renderRoomQueue();
+
+      // Host: guest(s) added tracks while we were idle at the end of the current song — continue playlist
+      if (isRoomHost && update.senderId !== myUserId && state.roomQueue.length > prevRoomQueueLen) {
+        const dur = Number(audio.duration || 0);
+        const cur = Number(audio.currentTime || 0);
+        const atEnd = !state.isPlaying && state.currentSongInfo && (
+          audio.ended ||
+          (Number.isFinite(dur) && dur > 0 && cur >= dur - 0.85)
+        );
+        if (atEnd) {
+          const vid = state.currentSongInfo.videoId;
+          const idx = state.roomQueue.findIndex((s) => s && s.videoId === vid);
+          if (idx >= 0 && idx < state.roomQueue.length - 1) {
+            state.currentIndex = idx + 1;
+            playSong(state.roomQueue[state.currentIndex], false);
+          }
+        }
+      }
     }
 
     if (update.currentSong !== undefined && update.currentSong !== null) {
@@ -745,6 +851,7 @@
       window.targetSyncTime = update.currentTime || 0;
 
       if (isNewSong) {
+        resetGuestSyncPlaybackRate();
         state.currentIndex = update.queue ? update.queue.findIndex(q => q.videoId === update.currentSong.videoId) : state.currentIndex;
         state.currentSongInfo = update.currentSong;
         updateUI(update.currentSong);
@@ -772,6 +879,7 @@
         } catch (e) { }
       } else if (window.targetSyncTime !== null) {
         // Same song, but we just joined and need to align to targetSyncTime
+        resetGuestSyncPlaybackRate();
         console.log(`[Sync] Same song, immediate jump to: ${window.targetSyncTime}s`);
         audio.currentTime = window.targetSyncTime;
         window.targetSyncTime = null;
@@ -801,12 +909,40 @@
         state.isPlaying = update.isPlaying;
         updatePlayBtns(update.isPlaying);
       }
-      if (update.currentTime !== undefined && window.targetSyncTime === null) {
-        // Only jump if deviation is significant (> 2.5s)
-        const deviation = Math.abs(audio.currentTime - update.currentTime);
-        if (deviation > 2.5) {
-          console.log(`[Sync] Correcting drift from Host: ${deviation.toFixed(2)}s`);
-          audio.currentTime = update.currentTime + 0.3; 
+      if (update.currentTime !== undefined && window.targetSyncTime === null && !isRoomHost) {
+        const hostT = Number(update.currentTime);
+        if (audio.paused || !Number.isFinite(hostT)) {
+          /* avoid fighting pause / invalid packets */
+        } else {
+          const localT = Number(audio.currentTime);
+          if (!Number.isFinite(localT)) {
+            /* still loading */
+          } else {
+            const delta = hostT - localT;
+            const deviation = Math.abs(delta);
+            const now = Date.now();
+            const dur = Number(audio.duration || 0);
+
+            // In sync: prefer gentle playbackRate nudges (no buffer flush) unless very far behind/ahead.
+            if (deviation <= 0.55) {
+              if (Math.abs(audio.playbackRate - 1) > 0.004) {
+                scheduleGuestPlaybackRateReset(700);
+              }
+            } else if (deviation < 6) {
+              const sign = delta > 0 ? 1 : -1;
+              const bump = Math.min(0.06, deviation * 0.009);
+              try {
+                audio.playbackRate = Math.max(0.93, Math.min(1.07, 1 + sign * bump));
+                scheduleGuestPlaybackRateReset(5200);
+              } catch (_) { /* ignore */ }
+            } else if (now - lastDriftCorrectionAt > 5200) {
+              lastDriftCorrectionAt = now;
+              resetGuestSyncPlaybackRate();
+              console.log(`[Sync] Hard correct drift: ${deviation.toFixed(2)}s`);
+              const cap = Number.isFinite(dur) && dur > 0 ? Math.max(0, dur - 0.08) : hostT;
+              audio.currentTime = Math.max(0, Math.min(hostT + 0.06, cap));
+            }
+          }
         }
       }
     } else {
@@ -1304,6 +1440,18 @@
       else { q.push(song); state.currentIndex = q.length - 1; }
     }
 
+    if (roomCode && isRoomHost) {
+      const rq = state.roomQueue;
+      if (!rq.some((s) => s && s.videoId === song.videoId)) {
+        const ins =
+          Number.isFinite(state.currentIndex) && state.currentIndex >= 0
+            ? Math.min(state.currentIndex, rq.length)
+            : rq.length;
+        rq.splice(ins, 0, song);
+        state.currentIndex = rq.findIndex((s) => s && s.videoId === song.videoId);
+      }
+    }
+
     state.currentSongInfo = song;
     updateUI(song);
     showBar(true);
@@ -1554,8 +1702,9 @@
       const mixSec = getActiveMixSeconds();
       if (mixSec <= 0) return;
       if (state.repeat === 'one') return;
-      if (!state.queue || state.queue.length < 2) return;
-      if (state.currentIndex < 0 || state.currentIndex >= state.queue.length - 1) return;
+      const mixQ = getActivePlaybackQueue();
+      if (!mixQ || mixQ.length < 2) return;
+      if (state.currentIndex < 0 || state.currentIndex >= mixQ.length - 1) return;
 
       mixTransitionActive = true;
       const targetVol = state.volume / 100;
@@ -1670,8 +1819,9 @@
     });
     repeatBtn?.classList.toggle('active', state.repeat !== 'off');
 
-    // Progress seeking (NP)
+    // Progress seeking (NP) — disabled in room for everyone (no scrub spam on realtime)
     $('#np-progress-bar')?.addEventListener('click', (e) => {
+      if (!canScrubTimeline()) return;
       const rect = e.currentTarget.getBoundingClientRect();
       if (audio.duration) {
         audio.currentTime = ((e.clientX - rect.left) / rect.width) * audio.duration;
@@ -1681,6 +1831,7 @@
 
     // Progress seeking (PB)
     $('#pb-progress')?.addEventListener('click', (e) => {
+      if (!canScrubTimeline()) return;
       const rect = e.currentTarget.getBoundingClientRect();
       if (audio.duration) {
         audio.currentTime = ((e.clientX - rect.left) / rect.width) * audio.duration;
@@ -1806,38 +1957,51 @@
 
     // Queue clear
     $('#btn-clear-queue')?.addEventListener('click', () => {
-      const cur = state.queue[state.currentIndex];
-      state.queue = cur ? [cur] : [];
-      state.currentIndex = cur ? 0 : -1;
-      renderQueue();
-      if (roomCode) renderRoomQueue();
-      saveState();
-      toast('Đã xóa hàng chờ', 'info');
-      emitRoomState({ queue: state.queue });
+      const isRoomTab = roomCode && state.activeQueueTab === 'room';
+      if (isRoomTab) {
+        const cur = state.roomQueue[state.currentIndex];
+        state.roomQueue = cur ? [cur] : [];
+        state.currentIndex = cur ? 0 : -1;
+        renderRoomQueue();
+        renderQueue();
+        saveState();
+        toast('Đã xóa hàng chờ phòng', 'info');
+        emitRoomState({ queue: state.roomQueue });
+      } else {
+        const cur = state.queue[state.currentIndex];
+        state.queue = cur ? [cur] : [];
+        state.currentIndex = cur ? 0 : -1;
+        renderQueue();
+        if (roomCode) renderRoomQueue();
+        saveState();
+        toast('Đã xóa hàng chờ', 'info');
+      }
     });
   }
 
   function nextTrack() {
-    if (state.queue.length === 0) return;
+    const q = getActivePlaybackQueue();
+    if (q.length === 0) return;
     if (state.shuffle) {
-      let n; do { n = Math.floor(Math.random() * state.queue.length); } while (n === state.currentIndex && state.queue.length > 1);
+      let n; do { n = Math.floor(Math.random() * q.length); } while (n === state.currentIndex && q.length > 1);
       state.currentIndex = n;
     } else {
       state.currentIndex++;
-      if (state.currentIndex >= state.queue.length) {
+      if (state.currentIndex >= q.length) {
         if (state.repeat === 'all') state.currentIndex = 0;
-        else { state.currentIndex = state.queue.length - 1; state.isPlaying = false; updatePlayBtns(false); return; }
+        else { state.currentIndex = q.length - 1; state.isPlaying = false; updatePlayBtns(false); return; }
       }
     }
-    const song = state.queue[state.currentIndex];
+    const song = q[state.currentIndex];
     if (song) playSong(song, false);
   }
 
   function prevTrack() {
     if (audio.currentTime > 3) { audio.currentTime = 0; return; }
-    if (state.queue.length === 0) return;
+    const q = getActivePlaybackQueue();
+    if (q.length === 0) return;
     state.currentIndex = Math.max(0, state.currentIndex - 1);
-    const song = state.queue[state.currentIndex];
+    const song = q[state.currentIndex];
     if (song) playSong(song, false);
   }
 
@@ -2392,12 +2556,18 @@
           $('#np-btn-play')?.click();
           break;
         case 'ArrowRight':
-          if (isGuest) return;
-          if (audio.duration) audio.currentTime = Math.min(audio.duration, audio.currentTime + 10);
+          if (!canScrubTimeline()) return;
+          if (audio.duration) {
+            audio.currentTime = Math.min(audio.duration, audio.currentTime + 10);
+            if (roomCode && isRoomHost) emitRoomState({ currentTime: audio.currentTime });
+          }
           break;
         case 'ArrowLeft':
-          if (isGuest) return;
-          if (audio.duration) audio.currentTime = Math.max(0, audio.currentTime - 10);
+          if (!canScrubTimeline()) return;
+          if (audio.duration) {
+            audio.currentTime = Math.max(0, audio.currentTime - 10);
+            if (roomCode && isRoomHost) emitRoomState({ currentTime: audio.currentTime });
+          }
           break;
         case 'ArrowUp': e.preventDefault(); setVol(Math.min(100, state.volume + 5)); break;
         case 'ArrowDown': e.preventDefault(); setVol(Math.max(0, state.volume - 5)); break;
