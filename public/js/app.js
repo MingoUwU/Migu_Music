@@ -157,12 +157,6 @@
     const p = $('#greeting-sub');
     if (h2) h2.textContent = text;
     if (p) p.textContent = sub;
-    if (window.electronAPI?.onUpdateEvent) {
-      setupElectronUpdaterUI();
-    }
-    if (window.electronAPI?.signalReady) {
-      window.electronAPI.signalReady();
-    }
   }
 
   // ── Init ──────────────────────────────────────────────────────
@@ -196,6 +190,10 @@
     setupKeyboardShortcuts();
     setupIdleDetection();
     setupModals();
+    setupElectronUpdaterUI();
+    if (window.electronAPI?.onUpdateMsg) {
+      window.electronAPI.onUpdateMsg((msg) => toast(msg, 'info'));
+    }
     setupMediaSession();
     setupQueueTabs();
     setupRoom(); // Initialize socket
@@ -229,6 +227,11 @@
         showBar(true);
       }
     }
+
+    // Báo main process: renderer đã sẵn sàng — sau khi modal + IPC đã gắn (tránh race với auto-updater)
+    setTimeout(() => {
+      window.electronAPI?.signalReady?.();
+    }, 120);
   }
 
   function detectPerformanceMode() {
@@ -2545,9 +2548,11 @@
   }
 
   let lastUpdaterProgressToast = -1;
+  let electronUpdaterUiWired = false;
 
   function setupElectronUpdaterUI() {
-    if (!window.electronAPI?.onUpdateEvent) return;
+    if (!window.electronAPI?.onUpdateEvent || electronUpdaterUiWired) return;
+    electronUpdaterUiWired = true;
     window.electronAPI.onUpdateEvent(async (ev) => {
       if (!ev || !ev.type) return;
       switch (ev.type) {

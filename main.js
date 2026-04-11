@@ -217,7 +217,8 @@ app.whenReady().then(async () => {
       });
       return;
     }
-    checkUpdates();
+    // Trễ một chút để renderer kịp gắn ipcRenderer.on('update-event') trước khi có sự kiện tải về
+    setTimeout(() => checkUpdates(), 900);
   });
 
   setInterval(() => {
@@ -249,11 +250,19 @@ autoUpdater.on('checking-for-update', () => {
 
 autoUpdater.on('update-available', (info) => {
   console.log('[Updater] Update available.', info.version);
-  sendUpdateEvent({
+  const payload = {
     type: 'available',
     version: info.version,
     releaseNotes: info.releaseNotes,
-  });
+  };
+  sendUpdateEvent(payload);
+  // Tương thích bản cũ chỉ lắng nghe update-msg (toast vẫn thấy được)
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(
+      'update-msg',
+      `Có bản cập nhật mới v${info.version}. Đang tải tự động…`
+    );
+  }
 });
 
 autoUpdater.on('update-not-available', () => {
@@ -283,7 +292,13 @@ autoUpdater.on('download-progress', (progressObj) => {
 autoUpdater.on('update-downloaded', (info) => {
   console.log('[Updater] Update downloaded', info.version);
   sendUpdateEvent({ type: 'downloaded', version: info.version });
-  if (mainWindow && !mainWindow.isDestroyed()) return;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(
+      'update-msg',
+      `Bản v${info.version} đã tải xong. Mở thông báo trong app hoặc khởi động lại để cài đặt.`
+    );
+    return;
+  }
   dialog
     .showMessageBox({
       type: 'info',
