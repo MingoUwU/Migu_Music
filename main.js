@@ -198,6 +198,11 @@ app.whenReady().then(async () => {
   autoUpdater.logger = console;
 
   if (app.isPackaged) {
+    // Tránh client/CDN trả latest.yml cũ — giúp thấy bản release mới sớm hơn
+    autoUpdater.requestHeaders = {
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      Pragma: 'no-cache',
+    };
     try {
       autoUpdater.setFeedURL({ provider: 'generic', url: MIGU_UPDATE_FEED_BASE });
       console.log('[Updater] Feed (generic):', MIGU_UPDATE_FEED_BASE);
@@ -244,9 +249,24 @@ app.whenReady().then(async () => {
     checkUpdates();
   }, 8000);
 
+  // Mỗi 30 phút + khi mở lại cửa sổ (xem handler show bên dưới)
   setInterval(() => {
     if (app.isPackaged) checkUpdates();
-  }, 2 * 60 * 60 * 1000);
+  }, 30 * 60 * 1000);
+
+  let lastShowUpdateCheck = 0;
+  const SHOW_UPDATE_COOLDOWN_MS = 3 * 60 * 1000;
+  function attachShowUpdateCheck() {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.on('show', () => {
+      if (!app.isPackaged) return;
+      const now = Date.now();
+      if (now - lastShowUpdateCheck < SHOW_UPDATE_COOLDOWN_MS) return;
+      lastShowUpdateCheck = now;
+      setTimeout(() => checkUpdates(), 400);
+    });
+  }
+  attachShowUpdateCheck();
 
   ipcMain.on('manual-check-update', () => {
     if (!app.isPackaged) {

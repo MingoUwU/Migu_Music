@@ -1,6 +1,6 @@
 {
   "name": "migu-music",
-  "version": "2.1.4",
+  "version": "2.1.5",
   "author": "TrungNam",
   "description": "MiGu Music Player",
   "main": "main.js",
@@ -39,6 +39,7 @@
     ],
     "files": [
       "main.js",
+      "preload.js",
       "server.js",
       "public/**/*",
       "package.json",
