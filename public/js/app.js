@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════
-   MiGu Music Player v2.1.2 — iOS 26 Liquid Glass Edition
+   MiGu Music Player v2.1.3 — iOS 26 Liquid Glass Edition
    ═══════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -2613,7 +2613,8 @@
         }
         case 'not-available':
           if (ev.fromManual) {
-            toast(`Bạn đang dùng phiên bản mới nhất (${ev.version || ''}).`, 'success');
+            const rv = ev.remoteVersion ? ` · Server: v${ev.remoteVersion}` : '';
+            toast(`Phiên bản trên máy: v${ev.version || '?'}${rv}`, 'success');
           }
           break;
         case 'error':

@@ -55,6 +55,11 @@ const ICON_PATH = path.join(__dirname, 'public', 'icon.png');
 let mainWindow;
 let tray;
 let manualUpdateCheck = false;
+let rendererReadyForUpdater = false;
+
+/** Dùng generic + URL /releases/latest/download/ — ổn định hơn chỉ dựa vào GitHub API (ít bị chặn / lệch provider). */
+const MIGU_UPDATE_FEED_BASE =
+  process.env.MIGU_UPDATE_BASE || 'https://github.com/MingoUwU/Migu_Music/releases/latest/download/';
 
 function sendUpdateEvent(payload) {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -191,6 +196,15 @@ app.whenReady().then(async () => {
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.logger = console;
 
+  if (app.isPackaged) {
+    try {
+      autoUpdater.setFeedURL({ provider: 'generic', url: MIGU_UPDATE_FEED_BASE });
+      console.log('[Updater] Feed (generic):', MIGU_UPDATE_FEED_BASE);
+    } catch (e) {
+      console.warn('[Updater] setFeedURL generic failed, dùng app-update.yml gốc:', e);
+    }
+  }
+
   function checkUpdates() {
     if (!app.isPackaged) {
       console.warn('[Updater] Bỏ qua: đang chạy từ mã nguồn (npm start). Chỉ bản cài .exe mới kiểm tra GitHub Release.');
@@ -209,6 +223,7 @@ app.whenReady().then(async () => {
 
   ipcMain.on('renderer-ready', () => {
     console.log('[Updater] Renderer ready.');
+    rendererReadyForUpdater = true;
     if (!app.isPackaged) {
       sendUpdateEvent({
         type: 'dev-mode',
@@ -217,9 +232,16 @@ app.whenReady().then(async () => {
       });
       return;
     }
-    // Trễ một chút để renderer kịp gắn ipcRenderer.on('update-event') trước khi có sự kiện tải về
-    setTimeout(() => checkUpdates(), 900);
+    // Trễ để renderer kịp gắn ipcRenderer.on('update-event' / 'update-msg')
+    setTimeout(() => checkUpdates(), 1200);
   });
+
+  // Dự phòng: nếu renderer không gửi signal (lỗi hiếm), vẫn thử check sau vài giây
+  setTimeout(() => {
+    if (!app.isPackaged || rendererReadyForUpdater) return;
+    console.warn('[Updater] Chưa nhận renderer-ready — thử checkForUpdates dự phòng.');
+    checkUpdates();
+  }, 8000);
 
   setInterval(() => {
     if (app.isPackaged) checkUpdates();
@@ -265,11 +287,17 @@ autoUpdater.on('update-available', (info) => {
   }
 });
 
-autoUpdater.on('update-not-available', () => {
-  console.log('[Updater] Update not available.');
+autoUpdater.on('update-not-available', (info) => {
+  const remote = info && (info.version || info.updateInfo?.version);
+  console.log('[Updater] Update not available. App:', app.getVersion(), 'remote:', remote || '(none)');
   const fromManual = manualUpdateCheck;
   manualUpdateCheck = false;
-  sendUpdateEvent({ type: 'not-available', version: app.getVersion(), fromManual });
+  sendUpdateEvent({
+    type: 'not-available',
+    version: app.getVersion(),
+    fromManual,
+    remoteVersion: remote || null,
+  });
 });
 
 autoUpdater.on('error', (err) => {
