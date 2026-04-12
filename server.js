@@ -276,6 +276,119 @@ async function youtubeSearch(query, retries = INNERTUBE_CLIENTS.length) {
   return results;
 }
 
+// ── Smart recommendations (type + diversity; tránh spam cùng một bài) ──
+function stripTitleNoise(title) {
+  if (!title) return '';
+  const cut = String(title).split(/[|｜/／—–-]{1,}/)[0].trim();
+  return cut || String(title).trim();
+}
+
+function titleCoreWordSet(title) {
+  const core = stripTitleNoise(title)
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ');
+  return new Set(core.split(/\s+/).filter((w) => w.length > 2));
+}
+
+/** Bỏ các bài trùng “cùng ca khúc” khi đang tìm đa dạng */
+function titlesTooSimilar(candidateTitle, currentTitle) {
+  const aw = titleCoreWordSet(currentTitle);
+  const bw = Array.from(titleCoreWordSet(candidateTitle));
+  if (aw.size < 4) return false;
+  let hit = 0;
+  for (const w of bw) if (aw.has(w)) hit++;
+  const ratio = hit / aw.size;
+  if (ratio >= 0.42) return true;
+  const aNorm = stripTitleNoise(currentTitle).toLowerCase().replace(/\s+/g, '');
+  const bNorm = stripTitleNoise(candidateTitle).toLowerCase().replace(/\s+/g, '');
+  if (aNorm.length >= 14 && bNorm.includes(aNorm.slice(0, 14))) return true;
+  return false;
+}
+
+function detectSuggestionType(title, author) {
+  const text = `${title || ''} ${author || ''}`.toLowerCase();
+  const rules = [
+    { key: 'remix', label: 'Remix / Trend', patterns: [/\bremix\b/i, /mashup/i, /sped\s*up/i, /speed\s*up/i, /slowed/i, /reverb/i, /nightcore/i, /nhạc\s*remix/i, /\btiktok\b.*mix/i] },
+    { key: 'lofi', label: 'Lofi', patterns: [/lofi/i, /lo-fi/i, /lo\s*fi/i, /study\s*beat/i] },
+    { key: 'chill', label: 'Chill', patterns: [/\bchill\b/i, /thư\s*giãn/i, /\brelax\b/i] },
+    { key: 'cover', label: 'Cover', patterns: [/\bcover\b/i, /acoustic/i, /piano\s*ver/i, /unplugged/i, /bản\s*cover/i] },
+    { key: 'karaoke', label: 'Karaoke', patterns: [/karaoke/i, /beat\s*chu[aả]?\s*lời/i] },
+    { key: 'rap', label: 'Rap / Trap', patterns: [/\brap\b/i, /\btrap\b/i, /hip\s*hop/i, /drill/i, /\bvn\/?a\s*trap\b/i] },
+    { key: 'ballad', label: 'Ballad', patterns: [/ballad/i, /\bbuồn\b/i, /tâm\s*trạng/i, /sầu/i] },
+  ];
+  for (const r of rules) {
+    if (r.patterns.some((p) => p.test(text))) return { key: r.key, label: r.label };
+  }
+  return { key: 'vpop', label: 'V-Pop' };
+}
+
+const TYPE_SEARCH_POOL = {
+  remix: ['nhạc remix việt nam hot trend 2025', 'remix tiktok việt nam mới nhất'],
+  lofi: ['lofi việt nam chill không lời', 'lofi study việt nam'],
+  chill: ['nhạc chill việt nam vibe hot', 'chill playlist việt nam 2025'],
+  cover: ['cover acoustic việt nam hay nhất', 'bản cover việt nam viral'],
+  karaoke: ['karaoke nhạc trẻ việt nam hot', 'karaoke hit việt nam'],
+  rap: ['rap việt hay nhất 2025', 'nhạc trap việt nam mới'],
+  ballad: ['nhạc ballad việt nam buồn hay', 'ballad việt nam tâm trạng'],
+  vpop: ['vpop mv mới nhất 2025', 'nhạc việt hot trend tháng này'],
+};
+
+async function youtubeSearchSafe(query) {
+  try {
+    return await youtubeSearch(query);
+  } catch (e) {
+    log('[MiGu] recommend search fail: ' + query + ' — ' + e.message, 'WARN');
+    return [];
+  }
+}
+
+/**
+ * @param {'mixed'|'type'|'related'} tab
+ */
+async function fetchRecommendationsForVideo(videoId, info, tab) {
+  const id = String(videoId);
+  const title = info.title || '';
+  const author = info.author || '';
+  const detected = detectSuggestionType(title, author);
+  const pools = TYPE_SEARCH_POOL[detected.key] || TYPE_SEARCH_POOL.vpop;
+
+  let raw = [];
+
+  if (tab === 'related') {
+    raw = await youtubeSearchSafe(title);
+  } else if (tab === 'type') {
+    for (const q of pools.slice(0, 2)) {
+      const r = await youtubeSearchSafe(q);
+      raw.push(...r);
+    }
+  } else {
+    // mixed: thể loại + khám phá V-Pop (đa dạng, không dán title bài hiện tại)
+    for (const q of pools.slice(0, 2)) {
+      const r = await youtubeSearchSafe(q);
+      raw.push(...r);
+    }
+    const extraPool = TYPE_SEARCH_POOL.vpop;
+    const qExtra = extraPool[Math.floor(Math.random() * extraPool.length)];
+    raw.push(...(await youtubeSearchSafe(qExtra)));
+  }
+
+  const seen = new Set();
+  const out = [];
+  for (const v of raw) {
+    if (!v.videoId || v.videoId === id || seen.has(v.videoId)) continue;
+    seen.add(v.videoId);
+    if (tab !== 'related' && titlesTooSimilar(v.title, title)) continue;
+    out.push(v);
+  }
+
+  out.sort((a, b) => (Number(b.viewCount) || 0) - (Number(a.viewCount) || 0));
+  const videos = out.slice(0, 14);
+  return {
+    videos,
+    suggestMeta: { tab, typeKey: detected.key, typeLabel: detected.label },
+  };
+}
+
 // ── YouTube Search Suggestions ───────────────────────────────────
 async function youtubeSuggestions(query) {
   const url = `https://suggestqueries-clients6.youtube.com/complete/search?client=youtube&q=${encodeURIComponent(query)}&ds=yt`;
@@ -473,6 +586,16 @@ async function getVideoInfo(videoId) {
   };
 }
 
+/** Cache metadata khi user đổi tab gợi ý — tránh gọi yt-dlp lặp lại */
+const VIDEO_INFO_UI_CACHE = new Map();
+async function getVideoInfoCachedForUi(videoId) {
+  const row = VIDEO_INFO_UI_CACHE.get(videoId);
+  if (row && Date.now() - row.t < 6 * 60 * 1000) return row.info;
+  const info = await getVideoInfo(videoId);
+  VIDEO_INFO_UI_CACHE.set(videoId, { info, t: Date.now() });
+  return info;
+}
+
 // ── API: Search ──────────────────────────────────────────────────
 app.get('/api/search', async (req, res) => {
   try {
@@ -490,18 +613,22 @@ app.get('/api/search', async (req, res) => {
 app.get('/api/info/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const info = await getVideoInfo(id);
+    const rawTab = String(req.query.suggest || 'mixed').toLowerCase();
+    const suggestTab = ['mixed', 'type', 'related'].includes(rawTab) ? rawTab : 'mixed';
+    const info = await getVideoInfoCachedForUi(id);
 
-    // Also search for related videos using the title
     let recommended = [];
+    let suggestMeta = { tab: suggestTab, typeKey: 'vpop', typeLabel: 'V-Pop' };
     try {
-      const related = await youtubeSearch(info.title);
-      recommended = related.filter(r => r.videoId !== id).slice(0, 8);
+      const pack = await fetchRecommendationsForVideo(id, info, suggestTab);
+      recommended = pack.videos;
+      suggestMeta = pack.suggestMeta;
     } catch (e) { /* silent */ }
 
     res.json({
       ...info,
-      recommendedVideos: recommended
+      recommendedVideos: recommended,
+      suggestMeta,
     });
   } catch (err) {
     log('[MiGu] Info error: ' + err.message, 'ERROR');

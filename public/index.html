@@ -297,7 +297,9 @@
                   <p style="margin-top:5px; color:var(--text-secondary);">Thành viên đang On: <span id="r-users-count"
                       style="font-weight:bold;color:white;">1</span></p>
                 </div>
-                <div style="display:flex; gap:10px;">
+                <div style="display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end;">
+                  <button type="button" class="btn-text" id="btn-copy-room-code"
+                    style="border:1px solid var(--border); padding:8px 12px;" title="Sao chép mã phòng">Sao chép mã</button>
                   <button class="btn-text" id="btn-copy-room-link"
                     style="border:1px solid var(--border); padding:8px 12px;"> Copy Link </button>
                   <button class="btn-text" id="btn-leave-room"
@@ -579,7 +581,7 @@
             </div>
           </div>
 
-          <!-- Queue / Suggest panel -->
+          <!-- Cá nhân (trên) + Gợi ý (dưới) -->
           <div class="np-right">
             <div class="np-queue-panel">
               <div class="queue-header-tabs">
@@ -594,23 +596,31 @@
               </div>
             </div>
 
-            <div class="np-suggest-panel">
-              <div class="suggest-header">
-                <h3>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <div class="np-panel-splitter" id="np-panel-splitter" role="separator" aria-orientation="horizontal" aria-label="Kéo chỉnh chiều cao hàng chờ và gợi ý"></div>
+
+            <aside class="np-suggest-panel">
+              <div class="suggest-toolbar">
+                <h3 class="suggest-toolbar-title">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                     <path d="M9 18V5l12-2v13" />
                     <circle cx="6" cy="18" r="3" />
                     <circle cx="18" cy="16" r="3" />
                   </svg>
                   Gợi ý
                 </h3>
+                <div class="suggest-segment" id="suggest-tabs" role="tablist" aria-label="Kiểu gợi ý">
+                  <button type="button" class="suggest-tab active" role="tab" data-suggest-tab="mixed" title="Nhiều bài khác nhau" aria-selected="true">Đa dạng</button>
+                  <button type="button" class="suggest-tab" role="tab" data-suggest-tab="type" title="Cùng thể loại (remix, chill…)" aria-selected="false">Thể loại</button>
+                  <button type="button" class="suggest-tab" role="tab" data-suggest-tab="related" title="Cùng tên / bản khác" aria-selected="false">Cùng bài</button>
+                </div>
               </div>
+              <p class="suggest-type-hint" id="suggest-type-hint" hidden></p>
               <div class="suggest-list" id="suggest-container">
                 <div class="empty-state small">
                   <p>Phát bài hát để nhận gợi ý</p>
                 </div>
               </div>
-            </div>
+            </aside>
           </div>
         </div>
       </section>

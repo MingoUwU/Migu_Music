@@ -31,6 +31,8 @@
     communityChartSongs: [],
     /** Gợi ý theo bài đang/ vừa phát — dùng autoplay khi hết hàng chờ */
     lastRecommendationVideos: [],
+    /** Tab gợi ý NP: mixed | type | related */
+    activeSuggestTab: 'mixed',
   };
 
   let socket = null;
@@ -225,6 +227,8 @@
     setupRoom(); // Initialize socket
     setupVisualizer(); // Initialize Web Audio API
     setupTrendingTabs();
+    setupSuggestTabs();
+    setupNpPanelSplitter();
     setupCommunityChartPlayAll();
     loadTrending();
     loadCommunityChart();
@@ -482,6 +486,12 @@
       switchView('home');
       history.pushState({}, '', window.location.pathname);
       toast('Đã rời phòng', 'info');
+    });
+
+    $('#btn-copy-room-code')?.addEventListener('click', () => {
+      if (!roomCode) return;
+      navigator.clipboard.writeText(roomCode);
+      toast('Đã copy mã phòng', 'success');
     });
 
     $('#btn-copy-room-link')?.addEventListener('click', () => {
@@ -2307,34 +2317,194 @@
     return null;
   }
 
+  function fmtSuggestViews(n) {
+    const x = Number(n);
+    if (!x || x < 1) return '';
+    if (x >= 1e6) return `${(x / 1e6).toFixed(1).replace(/\.0$/, '')} Tr xem`;
+    if (x >= 1e3) return `${Math.round(x / 1e3)} N xem`;
+    return `${x} xem`;
+  }
+
+  function syncSuggestTabUi() {
+    const wrap = $('#suggest-tabs');
+    if (!wrap) return;
+    wrap.querySelectorAll('.suggest-tab').forEach((b) => {
+      const on = (b.dataset.suggestTab || 'mixed') === state.activeSuggestTab;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+  }
+
+  function setupSuggestTabs() {
+    const wrap = $('#suggest-tabs');
+    if (!wrap) return;
+    wrap.querySelectorAll('.suggest-tab').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const t = btn.dataset.suggestTab || 'mixed';
+        const vid = state.currentSongInfo?.videoId;
+        if (!vid) return;
+        if (state.activeSuggestTab === t) return;
+        loadRecommendations(vid, t);
+      });
+    });
+  }
+
+  /** Kéo thanh giữa hàng chờ / gợi ý để chỉnh tỷ lệ (lưu localStorage). */
+  function setupNpPanelSplitter() {
+    const right = document.querySelector('.np-right');
+    const split = document.getElementById('np-panel-splitter');
+    if (!right || !split) return;
+
+    const FR_TOTAL = 2;
+    const clampFr = (x) => Math.max(0.55, Math.min(1.55, x));
+
+    let npQueueFr = 1;
+    try {
+      const raw = localStorage.getItem('np_queue_fr');
+      if (raw != null) {
+        const n = parseFloat(raw, 10);
+        if (!Number.isNaN(n)) npQueueFr = clampFr(n);
+      }
+    } catch (e) {
+      /* ignore */
+    }
+
+    function applyNpGrid() {
+      const q = clampFr(npQueueFr);
+      npQueueFr = q;
+      const s = FR_TOTAL - q;
+      right.style.gridTemplateRows = `minmax(72px, ${q}fr) 5px minmax(96px, ${s}fr)`;
+    }
+    applyNpGrid();
+
+    let dragging = false;
+    let startY = 0;
+    let startFr = 1;
+
+    function onStart(clientY) {
+      dragging = true;
+      startY = clientY;
+      startFr = npQueueFr;
+      document.body.style.cursor = 'row-resize';
+      document.body.style.userSelect = 'none';
+    }
+    function onMove(clientY) {
+      if (!dragging) return;
+      const h = right.getBoundingClientRect().height || 1;
+      const dy = clientY - startY;
+      npQueueFr = clampFr(startFr + (dy / h) * 1.35);
+      applyNpGrid();
+    }
+    function onEnd() {
+      if (!dragging) return;
+      dragging = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      try {
+        localStorage.setItem('np_queue_fr', String(npQueueFr));
+      } catch (e) {
+        /* ignore */
+      }
+    }
+
+    split.setAttribute('tabindex', '0');
+    split.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      onStart(e.clientY);
+    });
+    document.addEventListener('mousemove', (e) => onMove(e.clientY));
+    document.addEventListener('mouseup', onEnd);
+
+    split.addEventListener(
+      'touchstart',
+      (e) => {
+        if (e.touches.length !== 1) return;
+        e.preventDefault();
+        onStart(e.touches[0].clientY);
+      },
+      { passive: false }
+    );
+    document.addEventListener(
+      'touchmove',
+      (e) => {
+        if (!dragging || !e.touches[0]) return;
+        e.preventDefault();
+        onMove(e.touches[0].clientY);
+      },
+      { passive: false }
+    );
+    document.addEventListener('touchend', onEnd);
+
+    split.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        const step = e.key === 'ArrowDown' ? 0.04 : -0.04;
+        npQueueFr = clampFr(npQueueFr + step);
+        applyNpGrid();
+        try {
+          localStorage.setItem('np_queue_fr', String(npQueueFr));
+        } catch (err) {
+          /* ignore */
+        }
+      }
+    });
+  }
+
   // ── Recommendations ───────────────────────────────────────────
-  async function loadRecommendations(videoId) {
+  async function loadRecommendations(videoId, suggestTab) {
     const container = $('#suggest-container');
+    const tabsWrap = $('#suggest-tabs');
+    const hintEl = $('#suggest-type-hint');
     if (!container) return;
     if (isSuperMode()) {
       state.lastRecommendationVideos = [];
+      if (tabsWrap) tabsWrap.style.display = 'none';
+      if (hintEl) { hintEl.hidden = true; hintEl.textContent = ''; }
       container.innerHTML = '<div class="empty-state small"><p>Super mode: tắt gợi ý để tiết kiệm hiệu năng</p></div>';
       return;
     }
+    if (tabsWrap) tabsWrap.style.display = '';
+    if (suggestTab === undefined || suggestTab === null) {
+      state.activeSuggestTab = 'mixed';
+    } else {
+      state.activeSuggestTab = suggestTab;
+    }
+    syncSuggestTabUi();
     container.innerHTML = '<div class="loading-spinner"><div class="spinner"></div></div>';
 
     try {
-      const res = await fetch(`/api/info/${videoId}`);
+      const tab = encodeURIComponent(state.activeSuggestTab || 'mixed');
+      const res = await fetch(`/api/info/${encodeURIComponent(videoId)}?suggest=${tab}`);
       const data = await res.json();
       const recs = data.recommendedVideos || [];
       state.lastRecommendationVideos = recs;
+
+      if (hintEl) {
+        const meta = data.suggestMeta;
+        if (state.activeSuggestTab === 'related' || !meta?.typeLabel) {
+          hintEl.hidden = true;
+          hintEl.textContent = '';
+        } else {
+          hintEl.textContent = `Nhận diện thể loại: ${meta.typeLabel}`;
+          hintEl.hidden = false;
+        }
+      }
 
       if (recs.length === 0) {
         container.innerHTML = '<div class="empty-state small"><p>Không có gợi ý</p></div>';
         return;
       }
 
-      container.innerHTML = recs.map(v => `
+      container.innerHTML = recs.map((v) => {
+        const extra = [v.published || '', fmtSuggestViews(v.viewCount)].filter(Boolean).join(' · ');
+        return `
         <div class="suggest-item" data-id="${v.videoId}">
           <img class="suggest-thumb" src="${v.thumbnail}" alt="" loading="lazy">
           <div class="suggest-info">
             <div class="suggest-title">${esc(v.title)}</div>
             <div class="suggest-artist">${esc(v.author)}</div>
+            ${extra ? `<div class="suggest-extra">${esc(extra)}</div>` : ''}
           </div>
           <div class="suggest-actions">
             <button class="suggest-action-btn play" title="Phát" data-action="play">
@@ -2344,17 +2514,24 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             </button>
           </div>
-        </div>
-      `).join('');
+        </div>`;
+      }).join('');
 
-      container.querySelectorAll('.suggest-item').forEach(item => {
-        const song = { videoId: item.dataset.id, title: item.querySelector('.suggest-title').textContent, author: item.querySelector('.suggest-artist').textContent, thumbnail: item.querySelector('.suggest-thumb').src, duration: 0 };
+      container.querySelectorAll('.suggest-item').forEach((item) => {
+        const song = {
+          videoId: item.dataset.id,
+          title: item.querySelector('.suggest-title').textContent,
+          author: item.querySelector('.suggest-artist').textContent,
+          thumbnail: item.querySelector('.suggest-thumb').src,
+          duration: 0,
+        };
         item.querySelector('[data-action="play"]')?.addEventListener('click', (e) => { e.stopPropagation(); playSong(song); });
         item.querySelector('[data-action="add"]')?.addEventListener('click', (e) => { e.stopPropagation(); addToQueue(song); toast('Đã thêm vào hàng chờ', 'success'); });
         item.addEventListener('click', () => playSong(song));
       });
     } catch (err) {
       state.lastRecommendationVideos = [];
+      if (hintEl) { hintEl.hidden = true; hintEl.textContent = ''; }
       container.innerHTML = '<div class="empty-state small"><p>Không tải được gợi ý</p></div>';
     }
   }
