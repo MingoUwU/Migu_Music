@@ -40,7 +40,27 @@
   let isRoomHost = false;
   let isProcessingRoomSync = false;
   let syncHeartbeat = null;
+  /** Guest: chờ seek sau metadata — nội suy từ mốc host (syncAnchorAt / syncAudioTime). */
+  let pendingHostSyncSeek = null;
+  let lastHostEmitAt = 0;
   let myRoomJoinedAt = Date.now();
+
+  const ROOM_TICK_MS = 12000;
+  const ROOM_TICK_MS_SUPER = 20000;
+  const HOST_EMIT_DEBOUNCE_MS = 320;
+
+  /** Vị trí phát host tại “bây giờ” từ mốc thời gian — giảm phụ thuộc gói currentTime lặp lại. */
+  function getEffectiveHostPlaybackTime(u) {
+    if (!u) return 0;
+    const at = Number(u.syncAnchorAt);
+    const t0 = Number(u.syncAudioTime);
+    if (Number.isFinite(at) && Number.isFinite(t0)) {
+      if (u.isPlaying === false) return Math.max(0, t0);
+      return Math.max(0, t0 + (Date.now() - at) / 1000);
+    }
+    const ct = Number(u.currentTime);
+    return Number.isFinite(ct) ? Math.max(0, ct) : 0;
+  }
 
   const SUPABASE_URL = 'https://jhuqonoldshtxsquurho.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_ANl0zKdVePo8bAE_B8qKWA_bZOV5BvL';
@@ -352,8 +372,8 @@
       if (syncHeartbeat) {
         clearInterval(syncHeartbeat);
         syncHeartbeat = setInterval(() => {
-          if (isRoomHost && roomChannel && roomCode) emitRoomState();
-        }, state.superSaverMode ? 8000 : 5500);
+          if (isRoomHost && roomChannel && roomCode) emitRoomPlaybackTick();
+        }, state.superSaverMode ? ROOM_TICK_MS_SUPER : ROOM_TICK_MS);
       }
       if (!state.superSaverMode) {
         loadPersonalizedRecommendations();
@@ -499,6 +519,7 @@
       roomCode = null;
       isRoomHost = false;
       clearGuestAutoplayUnlock();
+      pendingHostSyncSeek = null;
       hasShownSyncPrompt = false;
       if (globalLobbyChannel) globalLobbyChannel.untrack().catch(() => { });
 
@@ -678,6 +699,7 @@
   async function joinRoomByCode(code, isCreating = false, metadata = null) {
     if (metadata) window.currentRoomMetadata = metadata;
     clearGuestAutoplayUnlock();
+    pendingHostSyncSeek = null;
     if (roomChannel) {
       await supabase.removeChannel(roomChannel);
     }
@@ -703,10 +725,8 @@
 
     if (syncHeartbeat) clearInterval(syncHeartbeat);
     syncHeartbeat = setInterval(() => {
-      if (isRoomHost && roomChannel && roomCode) {
-        emitRoomState();
-      }
-    }, isSuperMode() ? 8000 : 5500);
+      if (isRoomHost && roomChannel && roomCode) emitRoomPlaybackTick();
+    }, isSuperMode() ? ROOM_TICK_MS_SUPER : ROOM_TICK_MS);
 
     roomChannel = supabase.channel(`room:${roomCode}`, {
       config: { presence: { key: myUserId } }
@@ -830,7 +850,11 @@
     if (!roomCode || update.senderId === myUserId) return;
 
     // Strict Host Validation for playback updates
-    const isPlaybackUpdate = update.currentSong !== undefined || update.isPlaying !== undefined || update.currentTime !== undefined;
+    const isPlaybackUpdate =
+      update.currentSong !== undefined ||
+      update.isPlaying !== undefined ||
+      update.currentTime !== undefined ||
+      update.syncAnchorAt !== undefined;
     if (isPlaybackUpdate && window.currentRoomHostId && update.senderId !== window.currentRoomHostId) {
       console.warn(`[Sync] Ignoring playback update from non-host: ${update.senderId}`);
       return;
@@ -904,43 +928,55 @@
 
     if (update.currentSong !== undefined && update.currentSong !== null) {
       const isNewSong = !state.currentSongInfo || state.currentSongInfo.videoId !== update.currentSong.videoId;
-      
-      // Store target sync time for when metadata is loaded
-      window.targetSyncTime = update.currentTime || 0;
 
       if (isNewSong) {
         resetGuestSyncPlaybackRate();
+        window.targetSyncTime = null;
+        if (update.syncAnchorAt != null && update.syncAudioTime != null) {
+          pendingHostSyncSeek = {
+            syncAnchorAt: update.syncAnchorAt,
+            syncAudioTime: update.syncAudioTime,
+            isPlaying: update.isPlaying,
+          };
+        } else {
+          pendingHostSyncSeek = null;
+          window.targetSyncTime = update.currentTime ?? 0;
+        }
+
         state.currentIndex = update.queue ? update.queue.findIndex(q => q.videoId === update.currentSong.videoId) : state.currentIndex;
         state.currentSongInfo = update.currentSong;
         updateUI(update.currentSong);
         showBar(true);
-        
+
         try {
           audio.src = '/api/stream/' + update.currentSong.videoId;
           audio.load();
-          
-          // Ensure we jump to time ONLY after metadata is ready
+
           audio.onloadedmetadata = () => {
-             if (window.targetSyncTime !== null) {
-                console.log(`[Sync] Metadata loaded, jumping to: ${window.targetSyncTime}s`);
-                audio.currentTime = window.targetSyncTime;
-                const t = window.targetSyncTime;
-                window.targetSyncTime = null;
-                if (update.isPlaying) {
-                  audio
-                    .play()
-                    .then(() => clearGuestAutoplayUnlock())
-                    .catch(() => scheduleGuestAutoplayUnlock());
-                }
-             }
+            let seekSec = 0;
+            if (pendingHostSyncSeek) {
+              seekSec = getEffectiveHostPlaybackTime(pendingHostSyncSeek);
+              pendingHostSyncSeek = null;
+            } else if (window.targetSyncTime !== null) {
+              seekSec = window.targetSyncTime;
+              window.targetSyncTime = null;
+            }
+            console.log(`[Sync] Metadata loaded, jumping to: ${seekSec}s`);
+            audio.currentTime = seekSec;
+            if (update.isPlaying) {
+              audio
+                .play()
+                .then(() => clearGuestAutoplayUnlock())
+                .catch(() => scheduleGuestAutoplayUnlock());
+            }
           };
-        } catch (e) { }
+        } catch (e) { /* ignore */ }
       } else if (window.targetSyncTime !== null) {
-        // Same song, but we just joined and need to align to targetSyncTime
         resetGuestSyncPlaybackRate();
-        console.log(`[Sync] Same song, immediate jump to: ${window.targetSyncTime}s`);
-        audio.currentTime = window.targetSyncTime;
+        const seekTo = window.targetSyncTime;
         window.targetSyncTime = null;
+        console.log(`[Sync] Same song, immediate jump to: ${seekTo}s`);
+        audio.currentTime = seekTo;
         if (update.isPlaying && audio.paused) {
           audio
             .play()
@@ -970,8 +1006,13 @@
         state.isPlaying = update.isPlaying;
         updatePlayBtns(update.isPlaying);
       }
-      if (update.currentTime !== undefined && window.targetSyncTime === null && !isRoomHost) {
-        const hostT = Number(update.currentTime);
+      const canDriftCorrect =
+        !isRoomHost &&
+        window.targetSyncTime === null &&
+        !pendingHostSyncSeek &&
+        (update.syncAnchorAt != null || update.currentTime !== undefined);
+      if (canDriftCorrect) {
+        const hostT = getEffectiveHostPlaybackTime(update);
         if (audio.paused || !Number.isFinite(hostT)) {
           /* avoid fighting pause / invalid packets */
         } else {
@@ -1017,26 +1058,59 @@
     isProcessingRoomSync = false;
   }
 
+  /** Chỉ mốc phát + trạng thái — không gửi lại queue (giảm tải Supabase realtime). */
+  function emitRoomPlaybackTick() {
+    if (!roomChannel || !roomCode || !isRoomHost) return;
+    const now = Date.now();
+    roomChannel.send({
+      type: 'broadcast',
+      event: 'room_state',
+      payload: {
+        senderId: myUserId,
+        syncAnchorAt: now,
+        syncAudioTime: audio.currentTime,
+        isPlaying: state.isPlaying,
+        syncMode: $('#host-sync-mode')?.checked ? 'sync' : 'start',
+        currentSong: state.currentSongInfo,
+      },
+    });
+  }
+
   function emitRoomState(partialState = {}, force = false) {
     if (!roomChannel || !roomCode || (isProcessingRoomSync && !force)) return;
-    
+
+    const now = Date.now();
+    if (
+      isRoomHost &&
+      !force &&
+      Object.keys(partialState).length === 0 &&
+      now - lastHostEmitAt < HOST_EMIT_DEBOUNCE_MS
+    ) {
+      return;
+    }
+
     const update = {
       senderId: myUserId,
       queue: state.roomQueue,
-      ...partialState
+      ...partialState,
     };
 
     if (isRoomHost) {
+      const anchorNow = Date.now();
       update.currentSong = state.currentSongInfo;
       update.isPlaying = state.isPlaying;
+      update.syncAnchorAt = anchorNow;
+      update.syncAudioTime = audio.currentTime;
       update.currentTime = audio.currentTime;
       update.syncMode = $('#host-sync-mode')?.checked ? 'sync' : 'start';
-      
-      // ONLY the host broadcasts playback state to everyone
+      lastHostEmitAt = Date.now();
       roomChannel.send({ type: 'broadcast', event: 'room_state', payload: update });
     } else if (partialState.queue) {
-      // Guests can ONLY broadcast queue updates (like adding a song)
-      roomChannel.send({ type: 'broadcast', event: 'room_state', payload: { senderId: myUserId, queue: partialState.queue || state.roomQueue } });
+      roomChannel.send({
+        type: 'broadcast',
+        event: 'room_state',
+        payload: { senderId: myUserId, queue: partialState.queue || state.roomQueue },
+      });
     }
   }
 
@@ -1525,7 +1599,6 @@
 
     try {
       audio.src = `/api/stream/${encodeURIComponent(song.videoId)}`;
-      if (isRoomHost) emitRoomState(); 
       audio.load();
       await audio.play();
       state.isPlaying = true;
@@ -1534,7 +1607,7 @@
       tryPrefetchNextTrackUrl();
       loadRecommendations(song.videoId);
       loadPersonalizedRecommendations();
-      if (isRoomHost) emitRoomState(); 
+      if (isRoomHost) emitRoomState();
     } catch (err) {
       console.error('Play error:', err);
       toast('Không thể phát bài hát này', 'error');
