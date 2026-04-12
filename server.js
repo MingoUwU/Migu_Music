@@ -642,7 +642,6 @@ const TRENDING_CATEGORY_QUERIES = {
   chill: ['nhạc chill việt nam hot', 'chill playlist việt nam 2026'],
   lofi: ['lofi việt nam study', 'lofi chill beats không lời'],
   remix: ['nhạc remix việt nam hot trend', 'remix tiktok việt nam'],
-  karaoke: ['karaoke nhạc trẻ việt nam', 'karaoke hit việt nam'],
   mv: ['MV mới ra mắt việt nam', 'mv official việt nam mới'],
 };
 
