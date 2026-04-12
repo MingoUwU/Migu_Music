@@ -554,6 +554,18 @@ app.get('/api/playlist-info/:id', async (req, res) => {
   }
 });
 
+// ── API: Prefetch stream URL (warm memory cache — faster handoff to next track)
+app.get('/api/prefetch/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    await getAudioUrl(id);
+    res.status(204).end();
+  } catch (err) {
+    log('[MiGu] Prefetch error: ' + err.message, 'WARN');
+    res.status(204).end();
+  }
+});
+
 // ── API: Audio Stream Proxy ──────────────────────────────────────
 app.get('/api/stream/:id', async (req, res) => {
   try {

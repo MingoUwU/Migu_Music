@@ -26,10 +26,11 @@
     activeListenSession: null,
     lowPerformanceMode: false,
     superSaverMode: false,
-    mixTransitionSeconds: 0,
     lastVisualizerFrameAt: 0,
     trendingCategory: 'all',
     communityChartSongs: [],
+    /** Gợi ý theo bài đang/ vừa phát — dùng autoplay khi hết hàng chờ */
+    lastRecommendationVideos: [],
   };
 
   let socket = null;
@@ -61,6 +62,29 @@
   function getActivePlaybackQueue() {
     if (roomCode && isRoomHost) return state.roomQueue;
     return state.queue;
+  }
+
+  /** Bài kế trong hàng chờ (thứ tự tuần tự, không shuffle) — dùng prefetch URL. */
+  function getNextSongAfterCurrent() {
+    const q = getActivePlaybackQueue();
+    if (!q.length || state.currentIndex < 0) return null;
+    if (state.shuffle) return null;
+    const i = state.currentIndex;
+    if (i < q.length - 1) return q[i + 1];
+    if (state.repeat === 'all' && q.length > 0) return q[0];
+    return null;
+  }
+
+  let nextStreamPrefetchVideoId = null;
+  let endStallNudgeCount = 0;
+
+  /** Gọi server warm cache yt-dlp cho bài kế — giảm đứng 5–10s khi chuyển bài. */
+  function tryPrefetchNextTrackUrl() {
+    const next = getNextSongAfterCurrent();
+    if (!next?.videoId) return;
+    if (nextStreamPrefetchVideoId === next.videoId) return;
+    nextStreamPrefetchVideoId = next.videoId;
+    fetch(`/api/prefetch/${encodeURIComponent(next.videoId)}`, { method: 'GET', cache: 'no-store' }).catch(() => { });
   }
 
   /** Hard seek only when very far off (rare); softer path uses playbackRate. */
@@ -255,27 +279,9 @@
 
   function setupPerformanceToggle() {
     const btn = $('#btn-super-mode');
-    const mixBtn = $('#btn-mix-mode');
     if (!btn) return;
 
-    const mixMeta = mixBtn?.querySelector('[data-mix-meta]');
     const superMeta = btn.querySelector('[data-super-meta]');
-
-    const refreshMixLabel = () => {
-      if (!mixBtn) return;
-      const sec = Number(state.mixTransitionSeconds || 0);
-      const superOn = isSuperMode();
-      mixBtn.classList.toggle('is-locked', superOn);
-      mixBtn.classList.toggle('is-active', sec > 0 && !superOn);
-      mixBtn.disabled = superOn;
-      if (mixMeta) {
-        mixMeta.textContent = superOn
-          ? 'Tạm khoá khi Super đang bật'
-          : sec > 0
-            ? `Đang mix ${sec}s — nhấn để đổi`
-            : 'Tắt — nhấn để 2s / 4s';
-      }
-    };
 
     const refreshLabel = () => {
       const on = isSuperMode();
@@ -285,26 +291,9 @@
           ? 'Đang bật · gợi ý & hiệu ứng tắt'
           : 'Tắt — nhấn để tiết kiệm RAM/CPU';
       }
-      refreshMixLabel();
     };
 
     refreshLabel();
-    if (mixBtn) {
-      mixBtn.addEventListener('click', () => {
-        if (isSuperMode()) return;
-        const cycle = [0, 2, 4];
-        const idx = cycle.indexOf(Number(state.mixTransitionSeconds || 0));
-        state.mixTransitionSeconds = cycle[(idx + 1) % cycle.length];
-        saveState();
-        refreshMixLabel();
-        toast(
-          state.mixTransitionSeconds > 0
-            ? `Bật mix chuyển bài ${state.mixTransitionSeconds}s`
-            : 'Đã tắt mix chuyển bài',
-          'info'
-        );
-      });
-    }
     btn.addEventListener('click', () => {
       state.superSaverMode = !state.superSaverMode;
       saveState();
@@ -352,7 +341,6 @@
         state.shuffle = d.shuffle || false;
         state.listeningHistory = Array.isArray(d.listeningHistory) ? d.listeningHistory.slice(-120) : [];
         state.superSaverMode = !!d.superSaverMode;
-        state.mixTransitionSeconds = Number(d.mixTransitionSeconds || 0);
       }
     } catch (e) { /* silent */ }
   }
@@ -396,7 +384,6 @@
         shuffle: state.shuffle,
         listeningHistory: state.listeningHistory.slice(-120),
         superSaverMode: state.superSaverMode,
-        mixTransitionSeconds: state.mixTransitionSeconds,
       }));
     } catch (e) { /* silent */ }
   }
@@ -1484,6 +1471,8 @@
     }
 
     state.currentSongInfo = song;
+    nextStreamPrefetchVideoId = null;
+    endStallNudgeCount = 0;
     updateUI(song);
     showBar(true);
     switchView('nowplaying');
@@ -1496,6 +1485,7 @@
       state.isPlaying = true;
       updatePlayBtns(true);
       $('#np-disc')?.classList.add('spinning');
+      tryPrefetchNextTrackUrl();
       loadRecommendations(song.videoId);
       loadPersonalizedRecommendations();
       if (isRoomHost) emitRoomState(); 
@@ -1714,68 +1704,11 @@
   let endTransitionLock = false;
   let stallRecoverAttempts = 0;
   let pendingResumeTime = null;
-  let mixTransitionActive = false;
-  let mixFadeTimer = null;
 
   function setupPlayerControls() {
-    const getActiveMixSeconds = () => (isSuperMode() ? 0 : Number(state.mixTransitionSeconds || 0));
-
-    const clearMixTimers = () => {
-      mixTransitionActive = false;
-      if (mixFadeTimer) {
-        clearInterval(mixFadeTimer);
-        mixFadeTimer = null;
-      }
-    };
-
-    const startSimpleMixTransition = () => {
-      if (mixTransitionActive) return;
-      const mixSec = getActiveMixSeconds();
-      if (mixSec <= 0) return;
-      if (state.repeat === 'one') return;
-      const mixQ = getActivePlaybackQueue();
-      if (!mixQ || mixQ.length < 2) return;
-      if (state.currentIndex < 0 || state.currentIndex >= mixQ.length - 1) return;
-
-      mixTransitionActive = true;
-      const targetVol = state.volume / 100;
-      // Keep transition short so we always switch before true end.
-      const totalMs = Math.max(350, Math.floor(mixSec * 650));
-      const stepMs = 100;
-      const steps = Math.max(1, Math.floor(totalMs / stepMs));
-      let i = 0;
-      const startVol = Math.max(0, Math.min(1, audio.volume));
-
-      mixFadeTimer = setInterval(() => {
-        i++;
-        audio.volume = Math.max(0, startVol * (1 - i / steps));
-        if (i < steps) return;
-
-        clearInterval(mixFadeTimer);
-        mixFadeTimer = null;
-        nextTrack();
-
-        setTimeout(() => {
-          let j = 0;
-          const inSteps = Math.max(1, Math.floor((totalMs * 0.75) / stepMs));
-          audio.volume = 0;
-          const inTimer = setInterval(() => {
-            j++;
-            audio.volume = Math.min(targetVol, targetVol * (j / inSteps));
-            if (j >= inSteps) {
-              clearInterval(inTimer);
-              audio.volume = targetVol;
-              mixTransitionActive = false;
-            }
-          }, stepMs);
-        }, 120);
-      }, stepMs);
-    };
-
     const handleTrackEnded = (fromWatchdog = false) => {
       if (endTransitionLock) return;
       endTransitionLock = true;
-      clearMixTimers();
 
       if (state.currentSongInfo) recordListeningSnapshot(state.currentSongInfo, true);
       state.isPlaying = false;
@@ -1885,15 +1818,8 @@
       $('#np-duration').textContent = fmtDur(audio.duration);
       $('#pb-time').textContent = `${fmtDur(audio.currentTime)} / ${fmtDur(audio.duration)}`;
 
-      const mixSec = getActiveMixSeconds();
-      if (mixSec > 0 && !mixTransitionActive) {
-        const remaining = Number(audio.duration - audio.currentTime);
-        // Trigger earlier than configured duration to avoid "end first, then switch" feel.
-        const triggerWindow = mixSec + 1.25;
-        if (remaining <= triggerWindow && remaining > 0.2) {
-          startSimpleMixTransition();
-        }
-      }
+      const remSec = Number(audio.duration - audio.currentTime);
+      if (remSec <= 55 && remSec > 5) tryPrefetchNextTrackUrl();
     });
 
     audio.addEventListener('ended', () => {
@@ -1920,6 +1846,12 @@
         } catch (_) { }
         pendingResumeTime = null;
       }
+    });
+
+    audio.addEventListener('waiting', () => {
+      if (!state.isPlaying || !audio.duration) return;
+      const rem = audio.duration - audio.currentTime;
+      if (rem < 50 && rem > 2) tryPrefetchNextTrackUrl();
     });
 
     // Failsafe: some streams stall near end and never emit "ended"
@@ -1963,8 +1895,24 @@
         return;
       }
 
-      // If the stream freezes anywhere in the last 10 seconds, force next track.
-      if (remaining <= 10 && watchdogStallMs >= 3500) {
+      // Near end: nhẹ nhàng nudge timeline — decoder/buffer đôi khi bị kẹt vài giây
+      if (
+        remaining <= 14 &&
+        remaining > 0.06 &&
+        watchdogStallMs >= 800 &&
+        endStallNudgeCount < 6
+      ) {
+        endStallNudgeCount++;
+        try {
+          audio.currentTime = Math.min(cur + 0.12, dur - 0.03);
+        } catch (_) { /* ignore */ }
+        watchdogStallMs = 0;
+        watchdogPrevTime = Number(audio.currentTime || 0);
+        return;
+      }
+
+      // Chỉ ép chuyển bài khi đứng thật lâu (buffer cuối có thể mất >3s)
+      if (remaining <= 10 && watchdogStallMs >= 9000) {
         handleTrackEnded(true);
       }
     }, 1000);
@@ -2020,7 +1968,22 @@
       state.currentIndex++;
       if (state.currentIndex >= q.length) {
         if (state.repeat === 'all') state.currentIndex = 0;
-        else { state.currentIndex = q.length - 1; state.isPlaying = false; updatePlayBtns(false); return; }
+        else {
+          state.currentIndex = q.length - 1;
+          const suggestSong = canAutoplayFromSuggestions() ? getAutoplaySuggestionSong() : null;
+          if (suggestSong) {
+            const targetQ = roomCode && isRoomHost ? state.roomQueue : state.queue;
+            if (!targetQ.some((s) => s && s.videoId === suggestSong.videoId)) {
+              targetQ.push(suggestSong);
+            }
+            state.currentIndex = targetQ.length - 1;
+            playSong(suggestSong, false);
+            return;
+          }
+          state.isPlaying = false;
+          updatePlayBtns(false);
+          return;
+        }
       }
     }
     const song = q[state.currentIndex];
@@ -2321,11 +2284,35 @@
     });
   }
 
+  function canAutoplayFromSuggestions() {
+    if (isSuperMode()) return false;
+    if (roomCode && isSyncActive() && !isRoomHost) return false;
+    return true;
+  }
+
+  /** Bài gợi ý đầu tiên (khác bài hiện tại) để nối khi hết queue */
+  function getAutoplaySuggestionSong() {
+    const curId = state.currentSongInfo?.videoId;
+    const list = state.lastRecommendationVideos || [];
+    for (const v of list) {
+      if (!v?.videoId || v.videoId === curId) continue;
+      return {
+        videoId: v.videoId,
+        title: v.title || '',
+        author: v.author || '',
+        thumbnail: v.thumbnail || '',
+        duration: Number(v.duration) || 0,
+      };
+    }
+    return null;
+  }
+
   // ── Recommendations ───────────────────────────────────────────
   async function loadRecommendations(videoId) {
     const container = $('#suggest-container');
     if (!container) return;
     if (isSuperMode()) {
+      state.lastRecommendationVideos = [];
       container.innerHTML = '<div class="empty-state small"><p>Super mode: tắt gợi ý để tiết kiệm hiệu năng</p></div>';
       return;
     }
@@ -2335,6 +2322,7 @@
       const res = await fetch(`/api/info/${videoId}`);
       const data = await res.json();
       const recs = data.recommendedVideos || [];
+      state.lastRecommendationVideos = recs;
 
       if (recs.length === 0) {
         container.innerHTML = '<div class="empty-state small"><p>Không có gợi ý</p></div>';
@@ -2366,6 +2354,7 @@
         item.addEventListener('click', () => playSong(song));
       });
     } catch (err) {
+      state.lastRecommendationVideos = [];
       container.innerHTML = '<div class="empty-state small"><p>Không tải được gợi ý</p></div>';
     }
   }
