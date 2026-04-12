@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════
-   MiGu Music Player v2.1.6 — iOS 26 Liquid Glass Edition
+   MiGu Music Player v2.1.7 — iOS 26 Liquid Glass Edition
    ═══════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -111,6 +111,37 @@
         if (audio) audio.playbackRate = 1;
       } catch (_) { /* ignore */ }
     }, ms);
+  }
+
+  let guestAutoplayUnlockHandler = null;
+  function clearGuestAutoplayUnlock() {
+    if (guestAutoplayUnlockHandler) {
+      document.removeEventListener('pointerdown', guestAutoplayUnlockHandler, true);
+      guestAutoplayUnlockHandler = null;
+    }
+  }
+
+  /**
+   * Autoplay bị chặn: không bắt bấm Play trên thanh điều khiển (guest đang bị disable).
+   * Lần chạm/chuột đầu tiên trên app sẽ gọi audio.play() để nối vào luồng host.
+   */
+  function scheduleGuestAutoplayUnlock() {
+    if (!roomCode || isRoomHost || guestAutoplayUnlockHandler) return;
+    guestAutoplayUnlockHandler = () => {
+      if (!roomCode || isRoomHost) {
+        clearGuestAutoplayUnlock();
+        return;
+      }
+      audio
+        .play()
+        .then(() => {
+          clearGuestAutoplayUnlock();
+          state.isPlaying = true;
+          updatePlayBtns(true);
+        })
+        .catch(() => {});
+    };
+    document.addEventListener('pointerdown', guestAutoplayUnlockHandler, { capture: true });
   }
 
   const SVG = {
@@ -467,6 +498,7 @@
       }
       roomCode = null;
       isRoomHost = false;
+      clearGuestAutoplayUnlock();
       hasShownSyncPrompt = false;
       if (globalLobbyChannel) globalLobbyChannel.untrack().catch(() => { });
 
@@ -645,6 +677,7 @@
 
   async function joinRoomByCode(code, isCreating = false, metadata = null) {
     if (metadata) window.currentRoomMetadata = metadata;
+    clearGuestAutoplayUnlock();
     if (roomChannel) {
       await supabase.removeChannel(roomChannel);
     }
@@ -894,10 +927,10 @@
                 const t = window.targetSyncTime;
                 window.targetSyncTime = null;
                 if (update.isPlaying) {
-                  audio.play().catch((err) => {
-                    console.warn('[Sync] Autoplay blocked, showing prompt');
-                    toast('Bấm Play để đồng bộ với Host', 'info');
-                  });
+                  audio
+                    .play()
+                    .then(() => clearGuestAutoplayUnlock())
+                    .catch(() => scheduleGuestAutoplayUnlock());
                 }
              }
           };
@@ -909,10 +942,10 @@
         audio.currentTime = window.targetSyncTime;
         window.targetSyncTime = null;
         if (update.isPlaying && audio.paused) {
-          audio.play().catch(() => {
-            console.warn('[Sync] Autoplay blocked on same-song join');
-            toast('Bấm Play để đồng bộ với Host', 'info');
-          });
+          audio
+            .play()
+            .then(() => clearGuestAutoplayUnlock())
+            .catch(() => scheduleGuestAutoplayUnlock());
         }
       }
     }
@@ -927,7 +960,10 @@
     if (isSync) {
       if (update.isPlaying !== undefined) {
         if (update.isPlaying && audio.paused) {
-          audio.play().catch(() => { });
+          audio
+            .play()
+            .then(() => clearGuestAutoplayUnlock())
+            .catch(() => scheduleGuestAutoplayUnlock());
         } else if (!update.isPlaying && !audio.paused) {
           audio.pause();
         }
@@ -2652,7 +2688,7 @@
       return;
     }
 
-    const limit = isSuperMode() ? 8 : 12;
+    const limit = isSuperMode() ? 8 : 10;
     container.innerHTML = '<div class="loading-spinner" style="grid-column: 1 / -1; padding: 30px 0;"><div class="spinner"></div></div>';
 
     const { data, error } = await supabase
@@ -2699,7 +2735,7 @@
 
     if (btn) btn.style.display = '';
     container.innerHTML = rows.map((s) => renderChartSongCard(s)).join('');
-    bindSongCards(container);
+    bindCommunityChartCards(container);
   }
 
   async function loadPersonalizedRecommendations() {
@@ -2776,15 +2812,34 @@
       </div>`;
   }
 
-  function bindSongCards(container) {
-    container.querySelectorAll('.song-card').forEach(card => {
+  /** Top cộng đồng: trong phòng chỉ thêm hàng chờ phòng; ngoài phòng phát luôn. */
+  function bindCommunityChartCards(container) {
+    container.querySelectorAll('.song-card').forEach((card) => {
       card.addEventListener('click', () => {
+        const durEl = card.querySelector('.song-card-duration');
         const song = {
           videoId: card.dataset.id,
-          title: card.querySelector('.song-card-title').textContent,
-          author: card.querySelector('.song-card-artist').textContent,
-          thumbnail: card.querySelector('.song-card-thumb').src,
-          duration: parseDur(card.querySelector('.song-card-duration').textContent)
+          title: card.querySelector('.song-card-title')?.textContent || '',
+          author: card.querySelector('.song-card-artist')?.textContent || '',
+          thumbnail: card.querySelector('.song-card-thumb')?.src || '',
+          duration: durEl ? parseDur(durEl.textContent) : 0,
+        };
+        if (roomCode) addToQueue(song);
+        else playSong(song);
+      });
+    });
+  }
+
+  function bindSongCards(container) {
+    container.querySelectorAll('.song-card').forEach((card) => {
+      card.addEventListener('click', () => {
+        const durEl = card.querySelector('.song-card-duration');
+        const song = {
+          videoId: card.dataset.id,
+          title: card.querySelector('.song-card-title')?.textContent || '',
+          author: card.querySelector('.song-card-artist')?.textContent || '',
+          thumbnail: card.querySelector('.song-card-thumb')?.src || '',
+          duration: durEl ? parseDur(durEl.textContent) : 0,
         };
         playSong(song);
       });
