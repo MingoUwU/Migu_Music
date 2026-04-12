@@ -28,6 +28,8 @@
     superSaverMode: false,
     mixTransitionSeconds: 0,
     lastVisualizerFrameAt: 0,
+    trendingCategory: 'all',
+    communityChartSongs: [],
   };
 
   let socket = null;
@@ -198,7 +200,10 @@
     setupQueueTabs();
     setupRoom(); // Initialize socket
     setupVisualizer(); // Initialize Web Audio API
+    setupTrendingTabs();
+    setupCommunityChartPlayAll();
     loadTrending();
+    loadCommunityChart();
     loadPersonalizedRecommendations();
     renderPlaylists();
     setGreeting();
@@ -418,16 +423,23 @@
       state.listeningHistory = state.listeningHistory.slice(-150);
     }
     saveState();
+    if (ended) void reportPlayComplete(song);
+  }
+
+  function initSupabaseClient() {
+    if (supabase) return true;
+    if (typeof window.supabase === 'undefined') return false;
+    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    return true;
   }
 
   // ── Room (Supabase Listen Together) ──────────────────────────────────
   function setupRoom() {
-    if (typeof window.supabase === 'undefined') {
-      console.warn('[MiGu] Supabase SDK not found. Room feature disabled.');
+    if (!initSupabaseClient()) {
+      console.warn('[MiGu] Supabase SDK not found. Room & community chart disabled.');
       return;
     }
 
-    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     console.log('[MiGu] Supabase initialized');
 
     setupGlobalLobby();
@@ -1173,7 +1185,10 @@
 
     if (view === 'search') setTimeout(() => $('#search-input')?.focus(), 100);
     if (view === 'favorites') renderFavoritesList();
-    if (view === 'home' && !isSuperMode()) loadPersonalizedRecommendations();
+    if (view === 'home') {
+      loadCommunityChart();
+      if (!isSuperMode()) loadPersonalizedRecommendations();
+    }
 
     resetIdle();
   }
@@ -2356,11 +2371,31 @@
   }
 
   // ── Trending ──────────────────────────────────────────────────
+  function setupTrendingTabs() {
+    const wrap = $('#trending-tabs');
+    if (!wrap) return;
+    wrap.querySelectorAll('.trending-tab').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const cat = btn.dataset.category || 'all';
+        if (state.trendingCategory === cat) return;
+        state.trendingCategory = cat;
+        wrap.querySelectorAll('.trending-tab').forEach((b) => {
+          const on = b === btn;
+          b.classList.toggle('active', on);
+          b.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+        loadTrending();
+      });
+    });
+  }
+
   async function loadTrending() {
     const container = $('#trending-container');
     container.innerHTML = '<div class="loading-spinner" style="grid-column: 1 / -1; padding: 80px 0;"><div class="spinner"></div></div>';
     try {
-      const res = await fetch('/api/trending');
+      const cat = state.trendingCategory || 'all';
+      const url = cat === 'all' ? '/api/trending' : `/api/trending?category=${encodeURIComponent(cat)}`;
+      const res = await fetch(url);
       const data = await res.json();
 
       if (!data.results || data.results.length === 0) {
@@ -2374,6 +2409,131 @@
     } catch (err) {
       container.innerHTML = '<div class="empty-state small"><p>Không tải được nhạc thịnh hành</p></div>';
     }
+  }
+
+  function setupCommunityChartPlayAll() {
+    const btn = $('#btn-play-community-chart');
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      const list = state.communityChartSongs || [];
+      if (list.length === 0) return;
+      state.queue = list.map((t) => ({
+        videoId: t.videoId,
+        title: t.title,
+        author: t.author,
+        thumbnail: t.thumbnail,
+        duration: t.duration || 0,
+      }));
+      state.currentIndex = 0;
+      playSong(state.queue[0], false);
+      toast('Đang phát Top nghe nhiều', 'success');
+    });
+  }
+
+  async function reportPlayComplete(song) {
+    if (!song || !song.videoId) return;
+    if (!initSupabaseClient()) return;
+    try {
+      const { error } = await supabase.rpc('increment_song_play', {
+        p_video_id: String(song.videoId).slice(0, 32),
+        p_title: String(song.title || '').slice(0, 500),
+        p_author: String(song.author || '').slice(0, 300),
+      });
+      if (error) console.warn('[MiGu] increment_song_play:', error.message);
+      else if (state.currentView === 'home') loadCommunityChart();
+    } catch (e) {
+      console.warn('[MiGu] reportPlayComplete', e);
+    }
+  }
+
+  function rankBadgeClass(rank) {
+    if (rank === 1) return 'song-card-rank song-card-rank--gold';
+    if (rank === 2) return 'song-card-rank song-card-rank--silver';
+    if (rank === 3) return 'song-card-rank song-card-rank--bronze';
+    return 'song-card-rank';
+  }
+
+  function renderChartSongCard(song) {
+    const rk = rankBadgeClass(song.rank);
+    return `
+      <div class="song-card song-card--chart" data-id="${song.videoId}">
+        <span class="${rk}">${song.rank}</span>
+        <img class="song-card-thumb" src="${esc(song.thumbnail)}" alt="" loading="lazy">
+        <div class="song-card-overlay">
+          <div class="song-card-play">
+            <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+          </div>
+        </div>
+        <div class="song-card-info">
+          <div class="song-card-title">${esc(song.title)}</div>
+          <div class="song-card-artist">${esc(song.author)}</div>
+          <div class="song-card-chart-meta">${song.plays} lần nghe</div>
+        </div>
+      </div>`;
+  }
+
+  async function loadCommunityChart() {
+    const container = $('#community-chart-container');
+    const btn = $('#btn-play-community-chart');
+    if (!container) return;
+
+    if (!initSupabaseClient()) {
+      container.innerHTML = `<div class="empty-state small" style="grid-column: 1 / -1;">
+        <p>Chưa tải được Supabase (thiếu SDK hoặc mạng)</p>
+      </div>`;
+      if (btn) btn.style.display = 'none';
+      state.communityChartSongs = [];
+      return;
+    }
+
+    const limit = isSuperMode() ? 8 : 12;
+    container.innerHTML = '<div class="loading-spinner" style="grid-column: 1 / -1; padding: 30px 0;"><div class="spinner"></div></div>';
+
+    const { data, error } = await supabase
+      .from('song_play_stats')
+      .select('video_id,title,author,play_count')
+      .order('play_count', { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      console.warn('[MiGu] loadCommunityChart:', error.message);
+      container.innerHTML = `<div class="empty-state small" style="grid-column: 1 / -1;">
+        <p>Không tải được BXH — kiểm tra bảng <code>song_play_stats</code> và policy (xem <code>supabase/migrations</code>).</p>
+      </div>`;
+      if (btn) btn.style.display = 'none';
+      state.communityChartSongs = [];
+      return;
+    }
+
+    const rows = (data || []).map((row, i) => ({
+      videoId: row.video_id,
+      title: row.title || 'Không có tiêu đề',
+      author: row.author || '',
+      thumbnail: `https://i.ytimg.com/vi/${row.video_id}/mqdefault.jpg`,
+      duration: 0,
+      plays: Number(row.play_count) || 0,
+      rank: i + 1,
+    }));
+
+    state.communityChartSongs = rows.map((r) => ({
+      videoId: r.videoId,
+      title: r.title,
+      author: r.author,
+      thumbnail: r.thumbnail,
+      duration: 0,
+    }));
+
+    if (rows.length === 0) {
+      container.innerHTML = `<div class="empty-state small" style="grid-column: 1 / -1;">
+        <p>Chưa có dữ liệu — phát <strong>hết</strong> một bài để +1 lên bảng</p>
+      </div>`;
+      if (btn) btn.style.display = 'none';
+      return;
+    }
+
+    if (btn) btn.style.display = '';
+    container.innerHTML = rows.map((s) => renderChartSongCard(s)).join('');
+    bindSongCards(container);
   }
 
   async function loadPersonalizedRecommendations() {

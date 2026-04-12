@@ -637,17 +637,37 @@ app.get('/api/suggest', async (req, res) => {
 });
 
 // ── API: Trending Music ──────────────────────────────────────────
+/** Tab keys → search query pools (Innertube search, not official “Trending” charts). */
+const TRENDING_CATEGORY_QUERIES = {
+  chill: ['nhạc chill việt nam hot', 'chill playlist việt nam 2026'],
+  lofi: ['lofi việt nam study', 'lofi chill beats không lời'],
+  remix: ['nhạc remix việt nam hot trend', 'remix tiktok việt nam'],
+  karaoke: ['karaoke nhạc trẻ việt nam', 'karaoke hit việt nam'],
+  mv: ['MV mới ra mắt việt nam', 'mv official việt nam mới'],
+};
+
 app.get('/api/trending', async (req, res) => {
   try {
-    // Use search-based approach for reliable trending content
-    const queries = [
-      'nhạc chill vietnam 2026',
-      'MV mới ra mắt',
-      'top hits vietnam'
-    ];
-    const query = queries[Math.floor(Math.random() * queries.length)];
+    const cat = String(req.query.category || 'all').toLowerCase().replace(/[^a-z0-9_-]/g, '');
+    let query;
+
+    if (cat === 'all' || cat === '') {
+      const queries = [
+        'nhạc chill vietnam 2026',
+        'MV mới ra mắt',
+        'top hits vietnam'
+      ];
+      query = queries[Math.floor(Math.random() * queries.length)];
+    } else {
+      const pool = TRENDING_CATEGORY_QUERIES[cat];
+      if (!pool) {
+        return res.status(400).json({ error: 'Unknown trending category.' });
+      }
+      query = pool[Math.floor(Math.random() * pool.length)];
+    }
+
     const results = await youtubeSearch(query);
-    res.json({ results: results.slice(0, 12) });
+    res.json({ results: results.slice(0, 12), category: cat || 'all' });
   } catch (err) {
     log('[MiGu] Trending error: ' + err.message, 'ERROR');
     res.status(500).json({ error: 'Failed to get trending.' });

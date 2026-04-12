@@ -149,9 +149,29 @@
         <div class="section-header">
           <h3>🔥 Thịnh hành</h3>
         </div>
+        <div class="trending-tabs" id="trending-tabs" role="tablist" aria-label="Lọc thịnh hành">
+          <button type="button" class="trending-tab active" role="tab" data-category="all" aria-selected="true">Tất cả</button>
+          <button type="button" class="trending-tab" role="tab" data-category="chill" aria-selected="false">Chill</button>
+          <button type="button" class="trending-tab" role="tab" data-category="lofi" aria-selected="false">Lofi</button>
+          <button type="button" class="trending-tab" role="tab" data-category="remix" aria-selected="false">Remix</button>
+          <button type="button" class="trending-tab" role="tab" data-category="mv" aria-selected="false">MV mới</button>
+        </div>
         <div class="trending-grid" id="trending-container">
           <div class="loading-spinner" style="grid-column: 1 / -1; padding: 80px 0;">
             <div class="spinner"></div>
+          </div>
+        </div>
+
+        <div class="section-header section-header--split" style="margin-top: 24px;">
+          <div>
+            <h3>🏆 Top nghe nhiều</h3>
+            <p class="section-header-hint">Bảng cộng đồng</p>
+          </div>
+          <button type="button" class="btn-text section-header-action" id="btn-play-community-chart" style="display: none;">▶ Phát top</button>
+        </div>
+        <div class="trending-grid" id="community-chart-container">
+          <div class="empty-state small" style="grid-column: 1 / -1;">
+            <p>Đang tải bảng xếp hạng…</p>
           </div>
         </div>
 

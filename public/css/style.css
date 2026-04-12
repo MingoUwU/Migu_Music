@@ -564,6 +564,79 @@ img    { display: block; max-width: 100%; }
   letter-spacing: -0.2px;
 }
 
+.section-header--split {
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+
+.section-header--split > div:first-child {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.section-header-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  font-weight: 400;
+  max-width: 520px;
+}
+
+.section-header-action {
+  flex-shrink: 0;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ── Trending category chips (YouTube-style pills) ─────────────── */
+.trending-tabs {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  margin: -4px 0 16px;
+  padding-bottom: 4px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 71, 87, 0.35) transparent;
+}
+.trending-tabs::-webkit-scrollbar { height: 4px; }
+.trending-tabs::-webkit-scrollbar-thumb {
+  background: rgba(255, 71, 87, 0.35);
+  border-radius: 4px;
+}
+
+.trending-tab {
+  flex: 0 0 auto;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--text-secondary);
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--r-full);
+  cursor: pointer;
+  transition: background 0.2s var(--ease), color 0.2s var(--ease), border-color 0.2s var(--ease), box-shadow 0.2s var(--ease);
+  white-space: nowrap;
+}
+
+.trending-tab:hover {
+  color: #fff;
+  background: var(--glass-hover);
+  border-color: rgba(255, 71, 87, 0.35);
+}
+
+.trending-tab.active {
+  color: #fff;
+  background: linear-gradient(135deg, rgba(255, 71, 87, 0.45), rgba(200, 50, 80, 0.35));
+  border-color: rgba(255, 120, 130, 0.55);
+  box-shadow: 0 4px 18px rgba(255, 71, 87, 0.2);
+}
+
 /* ── Song Cards ───────────────────────────────────────────────── */
 .trending-grid, .favorites-grid {
   display: grid;
@@ -616,6 +689,51 @@ img    { display: block; max-width: 100%; }
 
 .song-card:hover .song-card-play { transform: scale(1) translateY(0); }
 .song-card-play svg { width: 16px; height: 16px; margin-left: 1px; }
+
+.song-card--chart .song-card-rank {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 800;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.72);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+.song-card-rank--gold {
+  background: linear-gradient(145deg, #ffe066, #e8a317);
+  color: #2a1f08;
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.song-card-rank--silver {
+  background: linear-gradient(145deg, #eef1f4, #9aa3ad);
+  color: #1c2228;
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.song-card-rank--bronze {
+  background: linear-gradient(145deg, #e8a56c, #a0522d);
+  color: #fff;
+  border-color: rgba(255, 200, 160, 0.35);
+}
+
+.song-card-chart-meta {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 3px;
+  font-weight: 500;
+}
 
 .song-card-info { padding: 10px 12px; }
 
