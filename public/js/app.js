@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════
-   MiGu Music Player v2.1.5 — iOS 26 Liquid Glass Edition
+   MiGu Music Player v2.1.6 — iOS 26 Liquid Glass Edition
    ═══════════════════════════════════════════════════════════════ */
 
 (function () {
