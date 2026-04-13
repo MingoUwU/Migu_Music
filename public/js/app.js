@@ -2077,7 +2077,7 @@
     });
   }
 
-  function nextTrack() {
+  async function nextTrack() {
     const q = getActivePlaybackQueue();
     if (q.length === 0) return;
     if (state.shuffle) {
@@ -2089,7 +2089,12 @@
         if (state.repeat === 'all') state.currentIndex = 0;
         else {
           state.currentIndex = q.length - 1;
-          const suggestSong = canAutoplayFromSuggestions() ? getAutoplaySuggestionSong() : null;
+          const shouldAutoplayFromMixed =
+            canAutoplayFromSuggestions() &&
+            !(roomCode && isRoomHost);
+          const suggestSong = shouldAutoplayFromMixed
+            ? await getAutoplayMixedSuggestionSong()
+            : null;
           if (suggestSong) {
             const targetQ = roomCode && isRoomHost ? state.roomQueue : state.queue;
             if (!targetQ.some((s) => s && s.videoId === suggestSong.videoId)) {
@@ -2423,6 +2428,37 @@
         duration: Number(v.duration) || 0,
       };
     }
+    return null;
+  }
+
+  /** Luon lay bai dau tien tu tab "Da dang" de autoplay khi het queue ca nhan. */
+  async function getAutoplayMixedSuggestionSong() {
+    const curId = state.currentSongInfo?.videoId;
+    if (!curId) return null;
+
+    if (state.activeSuggestTab === 'mixed') {
+      const cached = getAutoplaySuggestionSong();
+      if (cached) return cached;
+    }
+
+    try {
+      const res = await fetch(`/api/info/${encodeURIComponent(curId)}?suggest=mixed`);
+      const data = await res.json();
+      const recs = Array.isArray(data?.recommendedVideos) ? data.recommendedVideos : [];
+      for (const v of recs) {
+        if (!v?.videoId || v.videoId === curId) continue;
+        return {
+          videoId: v.videoId,
+          title: v.title || '',
+          author: v.author || '',
+          thumbnail: v.thumbnail || '',
+          duration: Number(v.duration) || 0,
+        };
+      }
+    } catch (_) {
+      // Ignore and let player stop normally when suggestions are unavailable.
+    }
+
     return null;
   }
 
