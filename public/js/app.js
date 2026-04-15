@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════
-   MiGu Music Player v2.2.0 — iOS 26 Liquid Glass Edition
+   MiGu Music Player v2.2.1
    ═══════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -2163,7 +2163,7 @@
       watchdogStallMs += 1000;
 
       // Mid-song stall recovery: refresh stream and resume from stuck timestamp
-      if (remaining > 2.2 && watchdogStallMs >= 8000) {
+      if (remaining > 2.2 && watchdogStallMs >= 4500) {
         if (stallRecoverAttempts < 2 && state.currentSongInfo?.videoId) {
           stallRecoverAttempts++;
           const resumeAt = Math.max(0, cur - 0.3);
@@ -2186,10 +2186,10 @@
 
       // Near end: nhẹ nhàng nudge timeline — decoder/buffer đôi khi bị kẹt vài giây
       if (
-        remaining <= 14 &&
+        remaining <= 20 &&
         remaining > 0.06 &&
-        watchdogStallMs >= 800 &&
-        endStallNudgeCount < 6
+        watchdogStallMs >= 600 &&
+        endStallNudgeCount < 10
       ) {
         endStallNudgeCount++;
         try {
@@ -2201,7 +2201,7 @@
       }
 
       // Chỉ ép chuyển bài khi đứng thật lâu (buffer cuối có thể mất >3s)
-      if (remaining <= 10 && watchdogStallMs >= 9000) {
+      if (remaining <= 20 && watchdogStallMs >= 3500) {
         handleTrackEnded(true);
       }
     }, 1000);

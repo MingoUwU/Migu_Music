@@ -499,10 +499,10 @@ async function getAudioUrl(videoId) {
   }
 
   const isDirectUrl = videoId.startsWith('http');
-  // Avoid m3u8 at all costs, prefer mp3/m4a direct streams
+  // Avoid m3u8 at all costs, prefer stable progressive audio streams
   const format = isDirectUrl
     ? 'bestaudio[ext=mp3]/bestaudio[ext=m4a]/bestaudio[protocol^=http][protocol!*=m3u8]/bestaudio'
-    : 'bestaudio[ext=webm][acodec=opus][abr>=160]/bestaudio[ext=webm][acodec=opus]/bestaudio[ext=webm]/bestaudio/best';
+    : 'bestaudio[ext=m4a]/bestaudio[protocol^=http][protocol!*=m3u8]/bestaudio[ext=webm][acodec=opus]/bestaudio[ext=webm]/bestaudio/best';
 
   log('[MiGu] Extracting for URL: ' + targetUrl);
 
@@ -541,10 +541,10 @@ async function getVideoInfo(videoId) {
   }
 
   const isDirectUrl = videoId.startsWith('http');
-  // Avoid m3u8 at all costs, prefer mp3/m4a direct streams
+  // Avoid m3u8 at all costs, prefer stable progressive audio streams
   const format = isDirectUrl
     ? 'bestaudio[ext=mp3]/bestaudio[ext=m4a]/bestaudio[protocol^=http][protocol!*=m3u8]/bestaudio'
-    : 'bestaudio[ext=webm][acodec=opus][abr>=160]/bestaudio[ext=webm][acodec=opus]/bestaudio[ext=webm]/bestaudio/best';
+    : 'bestaudio[ext=m4a]/bestaudio[protocol^=http][protocol!*=m3u8]/bestaudio[ext=webm][acodec=opus]/bestaudio[ext=webm]/bestaudio/best';
 
   log('[MiGu] Extracting metadata for: ' + targetUrl);
 
@@ -708,17 +708,32 @@ app.get('/api/stream/:id', async (req, res) => {
     log('[MiGu] Proxying remote stream: ' + audioInfo.url.substring(0, 100) + '...');
 
     // Proxy the audio stream
+    const streamUrl = String(audioInfo.url || '');
+    const isYouTubeStream =
+      streamUrl.includes('googlevideo.com') ||
+      streamUrl.includes('youtube.com') ||
+      streamUrl.includes('youtu.be');
+    const isSoundCloudStream = streamUrl.includes('soundcloud.com') || streamUrl.includes('sndcdn.com');
+
     const headers = {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       'Connection': 'keep-alive',
-      'Referer': 'https://soundcloud.com/',
-      'Origin': 'https://soundcloud.com'
+      'Accept': '*/*',
+      'Accept-Encoding': 'identity'
     };
-    if (req.headers.range) {
-      headers['Range'] = req.headers.range;
+    if (isYouTubeStream) {
+      headers['Referer'] = 'https://www.youtube.com/';
+      headers['Origin'] = 'https://www.youtube.com';
+    } else if (isSoundCloudStream) {
+      headers['Referer'] = 'https://soundcloud.com/';
+      headers['Origin'] = 'https://soundcloud.com';
     }
+    const requestedRange = String(req.headers.range || '');
+    if (requestedRange) headers['Range'] = requestedRange;
 
-    const audioRes = await fetch(audioInfo.url, { headers, timeout: 15000 });
+    // Do not use short fetch timeout for long music streams.
+    // A 15s timeout often aborts mid-track on unstable networks.
+    let audioRes = await fetch(audioInfo.url, { headers });
     const contentType = audioRes.headers.get('content-type') || '';
     const isHLS = contentType.includes('mpegurl') || audioInfo.url.includes('.m3u8');
 
@@ -748,13 +763,65 @@ app.get('/api/stream/:id', async (req, res) => {
       }
     }
 
-    audioRes.body.on('error', (err) => {
-      log('[MiGu] Stream Body Error: ' + err.message, 'ERROR');
+    let bytesForwarded = 0;
+    let reconnectAttempts = 0;
+    let streamClosed = false;
+    let reconnecting = false;
+
+    const parseRangeStart = (rangeHeader) => {
+      const m = /^bytes=(\d+)-/i.exec(String(rangeHeader || '').trim());
+      return m ? Number(m[1]) : 0;
+    };
+    const rangeStart = parseRangeStart(requestedRange);
+
+    const attachStream = (upstream, isReconnect = false) => {
+      if (!upstream || !upstream.body) return;
+      upstream.body.on('data', (chunk) => {
+        bytesForwarded += Buffer.byteLength(chunk);
+      });
+      upstream.body.on('error', async (err) => {
+        log('[MiGu] Stream Body Error: ' + err.message, 'ERROR');
+        if (streamClosed || res.writableEnded || reconnectAttempts >= 2) return;
+        reconnectAttempts++;
+        const resumeFrom = rangeStart + bytesForwarded;
+        const retryHeaders = { ...headers, Range: `bytes=${resumeFrom}-` };
+        log(`[MiGu] Reconnecting upstream stream from byte ${resumeFrom} (attempt ${reconnectAttempts})`, 'WARN');
+        reconnecting = true;
+        try {
+          const retryRes = await fetch(audioInfo.url, { headers: retryHeaders });
+          if (!retryRes.ok || !retryRes.body) {
+            log(`[MiGu] Reconnect failed with status ${retryRes.status}`, 'ERROR');
+            reconnecting = false;
+            return;
+          }
+          audioRes = retryRes;
+          reconnecting = false;
+          attachStream(retryRes, true);
+        } catch (reErr) {
+          reconnecting = false;
+          log('[MiGu] Reconnect stream error: ' + reErr.message, 'ERROR');
+        }
+      });
+      upstream.body.on('end', () => {
+        if (streamClosed || res.writableEnded) return;
+        setTimeout(() => {
+          if (!reconnecting && !res.writableEnded) res.end();
+        }, 120);
+      });
+      upstream.body.pipe(res, { end: false }).on('error', (err) => {
+        log('[MiGu] Response Pipe Error: ' + err.message, 'ERROR');
+      });
+      if (isReconnect) {
+        log('[MiGu] Upstream stream reattached successfully', 'WARN');
+      }
+    };
+
+    res.on('close', () => {
+      streamClosed = true;
+      try { if (audioRes?.body?.destroy) audioRes.body.destroy(); } catch (_) { /* ignore */ }
     });
 
-    audioRes.body.pipe(res).on('error', (err) => {
-      log('[MiGu] Response Pipe Error: ' + err.message, 'ERROR');
-    });
+    attachStream(audioRes);
   } catch (err) {
     log('[MiGu] Stream Proxy Error: ' + err.message, 'ERROR');
     if (!res.headersSent) {
@@ -870,7 +937,7 @@ app.post('/api/recommend', async (req, res) => {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '2.2.0',
+    version: '2.2.1',
     ytDlp: !!ytDlpPath,
     ytDlpPath: ytDlpPath ? 'Found' : 'Missing',
     uptime: process.uptime(),
