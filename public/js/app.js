@@ -134,6 +134,88 @@
   }
 
   let guestAutoplayUnlockHandler = null;
+  const HOME_SECTION_TTL_MS = 15 * 60 * 1000; // 15 minutes
+  const SAVE_STATE_DEBOUNCE_MS = 500;
+  const MAX_QUEUE_ITEMS = 200;
+  const MAX_FAVORITES_ITEMS = 500;
+  const MAX_PLAYLIST_ITEMS = 300;
+  const MAX_RECOMMENDATION_ITEMS = 20;
+  const MAX_COMMUNITY_CHART_ITEMS = 20;
+  const SUPER_QUEUE_RENDER_LIMIT = 60;
+  const SUPER_ROOM_QUEUE_RENDER_LIMIT = 40;
+  const SUPER_FAVORITES_RENDER_LIMIT = 80;
+  const SUPER_TRENDING_RENDER_LIMIT = 6;
+  const homeTrendingCache = new Map(); // key: category -> { rows, t }
+  const homeTrendingInFlight = new Map(); // key: category -> Promise
+  let homeCommunityCache = null; // { rows, t }
+  let homeCommunityInFlight = null;
+  let homePersonalizedCache = null; // { rows, t, sig }
+  let homePersonalizedInFlight = null;
+  let saveStateTimer = null;
+
+  function isFreshHomeCache(row) {
+    return !!(row && (Date.now() - Number(row.t || 0) < HOME_SECTION_TTL_MS));
+  }
+
+  function getHistorySignature() {
+    const hist = Array.isArray(state.listeningHistory) ? state.listeningHistory : [];
+    return hist.slice(-50).map(h => `${h.videoId || ''}:${Number(h.listenRatio || 0).toFixed(2)}:${h.liked ? 1 : 0}`).join('|');
+  }
+
+  function normalizeSongEntry(song) {
+    if (!song || !song.videoId) return null;
+    return {
+      videoId: String(song.videoId),
+      title: String(song.title || ''),
+      author: String(song.author || ''),
+      thumbnail: String(song.thumbnail || ''),
+      duration: Number(song.duration) || 0,
+    };
+  }
+
+  function getWindowedEntries(list, currentIndex, maxItems) {
+    const arr = Array.isArray(list) ? list : [];
+    if (!maxItems || arr.length <= maxItems) {
+      return arr.map((item, index) => ({ item, index }));
+    }
+
+    const safeCurrent = Number.isFinite(currentIndex) ? currentIndex : 0;
+    const half = Math.floor(maxItems / 2);
+    let start = Math.max(0, safeCurrent - half);
+    let end = start + maxItems;
+    if (end > arr.length) {
+      end = arr.length;
+      start = Math.max(0, end - maxItems);
+    }
+    return arr.slice(start, end).map((item, i) => ({ item, index: start + i }));
+  }
+
+  function enforceStateLimits() {
+    state.queue = (Array.isArray(state.queue) ? state.queue : [])
+      .map(normalizeSongEntry)
+      .filter(Boolean)
+      .slice(-MAX_QUEUE_ITEMS);
+
+    state.favorites = (Array.isArray(state.favorites) ? state.favorites : [])
+      .map(normalizeSongEntry)
+      .filter(Boolean)
+      .slice(0, MAX_FAVORITES_ITEMS);
+
+    const playlists = (state.playlists && typeof state.playlists === 'object') ? state.playlists : {};
+    const normalizedPlaylists = {};
+    Object.entries(playlists).forEach(([name, songs]) => {
+      normalizedPlaylists[name] = (Array.isArray(songs) ? songs : [])
+        .map(normalizeSongEntry)
+        .filter(Boolean)
+        .slice(0, MAX_PLAYLIST_ITEMS);
+    });
+    state.playlists = normalizedPlaylists;
+
+    state.lastRecommendationVideos = (Array.isArray(state.lastRecommendationVideos) ? state.lastRecommendationVideos : [])
+      .slice(0, MAX_RECOMMENDATION_ITEMS);
+    state.communityChartSongs = (Array.isArray(state.communityChartSongs) ? state.communityChartSongs : [])
+      .slice(0, MAX_COMMUNITY_CHART_ITEMS);
+  }
   function clearGuestAutoplayUnlock() {
     if (guestAutoplayUnlockHandler) {
       document.removeEventListener('pointerdown', guestAutoplayUnlockHandler, true);
@@ -289,14 +371,14 @@
     audio.volume = state.volume / 100;
     $('#fav-count').textContent = state.favorites.length;
 
-    // Allow manual check by clicking version
+    // Allow manual update check by clicking version label
     const ver = $('.logo-version');
     if (ver) {
       ver.style.cursor = 'pointer';
       ver.title = 'Click để kiểm tra cập nhật';
       ver.addEventListener('click', () => {
         toast('Đang kiểm tra cập nhật...', 'info');
-        if (window.electronAPI) window.electronAPI.checkUpdate();
+        window.electronAPI?.checkUpdate?.();
       });
     }
 
@@ -312,10 +394,18 @@
       }
     }
 
-    // Báo main process: renderer đã sẵn sàng — sau khi modal + IPC đã gắn (tránh race với auto-updater)
+    // Signal renderer ready so updater can start check.
     setTimeout(() => {
       window.electronAPI?.signalReady?.();
     }, 120);
+
+    window.addEventListener('beforeunload', () => {
+      if (saveStateTimer) {
+        clearTimeout(saveStateTimer);
+        saveStateTimer = null;
+      }
+      persistStateNow();
+    });
   }
 
   function detectPerformanceMode() {
@@ -364,6 +454,14 @@
       if (rec && state.superSaverMode) {
         rec.innerHTML = '<div class="empty-state small" style="grid-column: 1 / -1;"><p>Super mode: tắt gợi ý cá nhân</p></div>';
       }
+      const chart = $('#community-chart-container');
+      const chartBtn = $('#btn-play-community-chart');
+      if (state.superSaverMode) {
+        if (chart) {
+          chart.innerHTML = '<div class="empty-state small" style="grid-column: 1 / -1;"><p>Super mode: ẩn Top nghe nhiều để tiết kiệm hiệu năng</p></div>';
+        }
+        if (chartBtn) chartBtn.style.display = 'none';
+      }
 
       toast(state.superSaverMode ? 'Đã bật Super tiết kiệm' : 'Đã tắt Super tiết kiệm', 'info');
       if (state.superSaverMode && state.currentView === 'nowplaying') {
@@ -376,7 +474,7 @@
         }, state.superSaverMode ? ROOM_TICK_MS_SUPER : ROOM_TICK_MS);
       }
       if (!state.superSaverMode) {
-        loadPersonalizedRecommendations();
+        loadPersonalizedRecommendations({ preferCache: true });
       }
     });
   }
@@ -396,6 +494,10 @@
         state.shuffle = d.shuffle || false;
         state.listeningHistory = Array.isArray(d.listeningHistory) ? d.listeningHistory.slice(-120) : [];
         state.superSaverMode = !!d.superSaverMode;
+        enforceStateLimits();
+        if (state.currentIndex >= state.queue.length) {
+          state.currentIndex = state.queue.length ? state.queue.length - 1 : -1;
+        }
       }
     } catch (e) { /* silent */ }
   }
@@ -427,7 +529,8 @@
     }
   }
 
-  function saveState() {
+  function persistStateNow() {
+    enforceStateLimits();
     try {
       localStorage.setItem('migu_state', JSON.stringify({
         favorites: state.favorites,
@@ -441,6 +544,14 @@
         superSaverMode: state.superSaverMode,
       }));
     } catch (e) { /* silent */ }
+  }
+
+  function saveState() {
+    if (saveStateTimer) clearTimeout(saveStateTimer);
+    saveStateTimer = setTimeout(() => {
+      saveStateTimer = null;
+      persistStateNow();
+    }, SAVE_STATE_DEBOUNCE_MS);
   }
 
   function recordListeningSnapshot(song, ended = false) {
@@ -1164,7 +1275,10 @@
   function renderRoomQueue() {
     const container = $('#room-queue-container');
     if (!container) return;
-    container.innerHTML = state.roomQueue.map((song, i) => `
+    const entries = isSuperMode()
+      ? getWindowedEntries(state.roomQueue, state.currentIndex, SUPER_ROOM_QUEUE_RENDER_LIMIT)
+      : state.roomQueue.map((item, index) => ({ item, index }));
+    container.innerHTML = entries.map(({ item: song, index: i }) => `
       <div class="queue-item ${state.currentSongInfo && song.videoId === state.currentSongInfo.videoId ? 'active' : ''}" style="margin-bottom:8px;" data-index="${i}">
         <span class="queue-item-index" style="color:var(--text-secondary);font-size:12px;width:20px;text-align:center;">${i + 1}</span>
         <img class="queue-item-thumb" src="${song.thumbnail}" alt="" loading="lazy" style="width:40px;height:40px;border-radius:4px;object-fit:cover;">
@@ -1183,10 +1297,11 @@
       </div>
     `).join('');
 
-    container.querySelectorAll('.q-room-up').forEach(btn => {
-      btn.addEventListener('click', (e) => {
+    container.onclick = (e) => {
+      const upBtn = e.target.closest('.q-room-up');
+      if (upBtn) {
         e.stopPropagation();
-        const idx = parseInt(btn.dataset.index);
+        const idx = parseInt(upBtn.dataset.index, 10);
         if (idx > 0 && idx !== state.currentIndex) {
           let target = state.currentIndex >= 0 ? state.currentIndex + 1 : 0;
           if (target > idx) target--; // Compensate for the element we are about to remove
@@ -1202,13 +1317,13 @@
           saveState();
           emitRoomState({ queue: state.roomQueue });
         }
-      });
-    });
+        return;
+      }
 
-    container.querySelectorAll('.q-room-remove').forEach(btn => {
-      btn.addEventListener('click', (e) => {
+      const removeBtn = e.target.closest('.q-room-remove');
+      if (removeBtn) {
         e.stopPropagation();
-        const idx = parseInt(btn.dataset.index);
+        const idx = parseInt(removeBtn.dataset.index, 10);
         state.roomQueue.splice(idx, 1);
         if (idx < state.currentIndex) state.currentIndex--;
         else if (idx === state.currentIndex) {
@@ -1224,8 +1339,8 @@
         if (state.activeQueueTab === 'room') renderQueue();
         saveState();
         emitRoomState({ queue: state.roomQueue });
-      });
-    });
+      }
+    };
   }
 
 
@@ -1293,8 +1408,9 @@
     if (view === 'search') setTimeout(() => $('#search-input')?.focus(), 100);
     if (view === 'favorites') renderFavoritesList();
     if (view === 'home') {
-      loadCommunityChart();
-      if (!isSuperMode()) loadPersonalizedRecommendations();
+      loadTrending({ preferCache: true });
+      loadCommunityChart({ preferCache: true });
+      if (!isSuperMode()) loadPersonalizedRecommendations({ preferCache: true });
     }
 
     resetIdle();
@@ -1606,7 +1722,7 @@
       $('#np-disc')?.classList.add('spinning');
       tryPrefetchNextTrackUrl();
       loadRecommendations(song.videoId);
-      loadPersonalizedRecommendations();
+      loadPersonalizedRecommendations({ preferCache: true });
       if (isRoomHost) emitRoomState();
     } catch (err) {
       console.error('Play error:', err);
@@ -2153,6 +2269,10 @@
     const targetQ = roomCode ? state.roomQueue : state.queue;
     if (!targetQ.some(q => q.videoId === song.videoId)) {
       targetQ.push(song);
+      if (targetQ.length > MAX_QUEUE_ITEMS) {
+        targetQ.splice(0, targetQ.length - MAX_QUEUE_ITEMS);
+        state.currentIndex = Math.max(-1, state.currentIndex - 1);
+      }
       renderQueue();
       if (roomCode) renderRoomQueue();
       saveState();
@@ -2181,7 +2301,11 @@
       return;
     }
 
-    list.innerHTML = q.map((song, i) => `
+    const entries = isSuperMode()
+      ? getWindowedEntries(q, state.currentIndex, SUPER_QUEUE_RENDER_LIMIT)
+      : q.map((item, index) => ({ item, index }));
+
+    list.innerHTML = entries.map(({ item: song, index: i }) => `
       <div class="queue-item ${state.currentSongInfo && song.videoId === state.currentSongInfo.videoId ? 'active' : ''}" data-index="${i}">
         <span class="queue-item-index">${(state.currentSongInfo && song.videoId === state.currentSongInfo.videoId) ? '▶' : (i + 1)}</span>
         <img class="queue-item-thumb" src="${song.thumbnail}" alt="" loading="lazy">
@@ -2195,38 +2319,11 @@
       </div>
     `).join('');
 
-    list.querySelectorAll('.queue-item').forEach(item => {
-      item.addEventListener('click', async (e) => {
-        if (e.target.closest('.queue-item-remove')) return;
-        const idx = parseInt(item.dataset.index);
-        
-        if (isRoom) {
-          if (isRoomHost) playSong(state.roomQueue[idx], false);
-          else toast('Chỉ Host mới có quyền chọn bài phát trực tiếp', 'info');
-        } else {
-          if (roomCode && isSyncActive()) {
-            const agreed = await showConfirmModal({
-              title: 'Rời chế độ nghe chung?',
-              message: 'Bạn sẽ chuyển sang phát danh sách cá nhân.',
-              confirmText: 'Tiếp tục',
-              cancelText: 'Ở lại phòng'
-            });
-            if (agreed) {
-              window.userSyncChoice = 'start'; // "start" mode = unsynced local
-              playSong(state.queue[idx], false);
-            }
-          } else {
-            state.currentIndex = idx;
-            playSong(state.queue[idx], false);
-          }
-        }
-      });
-    });
-
-    list.querySelectorAll('.queue-item-remove').forEach(btn => {
-      btn.addEventListener('click', (e) => {
+    list.onclick = async (e) => {
+      const removeBtn = e.target.closest('.queue-item-remove');
+      if (removeBtn) {
         e.stopPropagation();
-        const idx = parseInt(btn.dataset.index);
+        const idx = parseInt(removeBtn.dataset.index, 10);
         if (isRoom) {
           state.roomQueue.splice(idx, 1);
           emitRoomState({ queue: state.roomQueue });
@@ -2240,8 +2337,34 @@
         }
         renderQueue();
         saveState();
-      });
-    });
+        return;
+      }
+
+      const item = e.target.closest('.queue-item');
+      if (!item) return;
+      const idx = parseInt(item.dataset.index, 10);
+
+      if (isRoom) {
+        if (isRoomHost) playSong(state.roomQueue[idx], false);
+        else toast('Chỉ Host mới có quyền chọn bài phát trực tiếp', 'info');
+      } else {
+        if (roomCode && isSyncActive()) {
+          const agreed = await showConfirmModal({
+            title: 'Rời chế độ nghe chung?',
+            message: 'Bạn sẽ chuyển sang phát danh sách cá nhân.',
+            confirmText: 'Tiếp tục',
+            cancelText: 'Ở lại phòng'
+          });
+          if (agreed) {
+            window.userSyncChoice = 'start'; // "start" mode = unsynced local
+            playSong(state.queue[idx], false);
+          }
+        } else {
+          state.currentIndex = idx;
+          playSong(state.queue[idx], false);
+        }
+      }
+    };
 
     const active = list.querySelector('.queue-item.active');
     if (active) active.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -2275,7 +2398,10 @@
       return;
     }
 
-    list.innerHTML = state.favorites.map(item => renderResultItem(item)).join('');
+    const rows = isSuperMode()
+      ? state.favorites.slice(0, SUPER_FAVORITES_RENDER_LIMIT)
+      : state.favorites;
+    list.innerHTML = rows.map(item => renderResultItem(item)).join('');
     bindResultActions(list);
   }
 
@@ -2695,31 +2821,74 @@
           b.classList.toggle('active', on);
           b.setAttribute('aria-selected', on ? 'true' : 'false');
         });
-        loadTrending();
+        loadTrending({ preferCache: true });
       });
     });
   }
 
-  async function loadTrending() {
+  function renderTrendingRows(rows) {
     const container = $('#trending-container');
-    container.innerHTML = '<div class="loading-spinner" style="grid-column: 1 / -1; padding: 80px 0;"><div class="spinner"></div></div>';
-    try {
-      const cat = state.trendingCategory || 'all';
-      const url = cat === 'all' ? '/api/trending' : `/api/trending?category=${encodeURIComponent(cat)}`;
-      const res = await fetch(url);
-      const data = await res.json();
-
-      if (!data.results || data.results.length === 0) {
-        container.innerHTML = '<div class="empty-state small"><p>Không tải được nhạc thịnh hành</p></div>';
-        return;
-      }
-
-      const rows = isSuperMode() ? data.results.slice(0, 8) : data.results;
-      container.innerHTML = rows.map(song => renderSongCard(song)).join('');
-      bindSongCards(container);
-    } catch (err) {
+    if (!container) return;
+    if (!rows || rows.length === 0) {
       container.innerHTML = '<div class="empty-state small"><p>Không tải được nhạc thịnh hành</p></div>';
+      return;
     }
+    const visibleRows = isSuperMode() ? rows.slice(0, SUPER_TRENDING_RENDER_LIMIT) : rows;
+    container.innerHTML = visibleRows.map(song => renderSongCard(song)).join('');
+    bindSongCards(container);
+  }
+
+  async function loadTrending(options = {}) {
+    const { preferCache = false, force = false } = options;
+    const container = $('#trending-container');
+    if (!container) return;
+    const cat = state.trendingCategory || 'all';
+    const cacheRow = homeTrendingCache.get(cat);
+
+    if (!force && preferCache && isFreshHomeCache(cacheRow)) {
+      renderTrendingRows(cacheRow.rows || []);
+      return;
+    }
+
+    if (!force && homeTrendingInFlight.has(cat)) {
+      if (!preferCache) {
+        container.innerHTML = '<div class="loading-spinner" style="grid-column: 1 / -1; padding: 80px 0;"><div class="spinner"></div></div>';
+      }
+      await homeTrendingInFlight.get(cat);
+      return;
+    }
+
+    if (!preferCache || !cacheRow) {
+      container.innerHTML = '<div class="loading-spinner" style="grid-column: 1 / -1; padding: 80px 0;"><div class="spinner"></div></div>';
+    } else {
+      renderTrendingRows(cacheRow.rows || []);
+    }
+
+    const request = (async () => {
+      try {
+        const url = cat === 'all' ? '/api/trending' : `/api/trending?category=${encodeURIComponent(cat)}`;
+        const res = await fetch(url);
+        const data = await res.json();
+
+        const rows = Array.isArray(data.results) ? data.results : [];
+        if (rows.length === 0) {
+          if (!cacheRow) container.innerHTML = '<div class="empty-state small"><p>Không tải được nhạc thịnh hành</p></div>';
+          return;
+        }
+
+        homeTrendingCache.set(cat, { rows, t: Date.now() });
+        renderTrendingRows(rows);
+      } catch (err) {
+        if (!cacheRow) container.innerHTML = '<div class="empty-state small"><p>Không tải được nhạc thịnh hành</p></div>';
+      } finally {
+        homeTrendingInFlight.delete(cat);
+      }
+    })();
+    homeTrendingInFlight.set(cat, request);
+
+    try {
+      await request;
+    } catch (_) { /* handled in request */ }
   }
 
   function setupCommunityChartPlayAll() {
@@ -2751,7 +2920,7 @@
         p_author: String(song.author || '').slice(0, 300),
       });
       if (error) console.warn('[MiGu] increment_song_play:', error.message);
-      else if (state.currentView === 'home') loadCommunityChart();
+      else if (state.currentView === 'home') loadCommunityChart({ preferCache: true });
     } catch (e) {
       console.warn('[MiGu] reportPlayComplete', e);
     }
@@ -2783,10 +2952,58 @@
       </div>`;
   }
 
-  async function loadCommunityChart() {
+  function renderCommunityChartRows(rows) {
     const container = $('#community-chart-container');
     const btn = $('#btn-play-community-chart');
     if (!container) return;
+    const list = Array.isArray(rows) ? rows : [];
+
+    state.communityChartSongs = list.map((r) => ({
+      videoId: r.videoId,
+      title: r.title,
+      author: r.author,
+      thumbnail: r.thumbnail,
+      duration: 0,
+    }));
+
+    if (list.length === 0) {
+      container.innerHTML = `<div class="empty-state small" style="grid-column: 1 / -1;">
+        <p>Chưa có dữ liệu — phát <strong>hết</strong> một bài để +1 lên bảng</p>
+      </div>`;
+      if (btn) btn.style.display = 'none';
+      return;
+    }
+
+    if (btn) btn.style.display = '';
+    container.innerHTML = list.map((s) => renderChartSongCard(s)).join('');
+    bindCommunityChartCards(container);
+  }
+
+  async function loadCommunityChart(options = {}) {
+    const { preferCache = false, force = false } = options;
+    const container = $('#community-chart-container');
+    const btn = $('#btn-play-community-chart');
+    if (!container) return;
+
+    if (isSuperMode() && !force) {
+      container.innerHTML = '<div class="empty-state small" style="grid-column: 1 / -1;"><p>Super mode: ẩn Top nghe nhiều để tiết kiệm hiệu năng</p></div>';
+      if (btn) btn.style.display = 'none';
+      state.communityChartSongs = [];
+      return;
+    }
+
+    if (!force && preferCache && isFreshHomeCache(homeCommunityCache)) {
+      renderCommunityChartRows(homeCommunityCache.rows || []);
+      return;
+    }
+
+    if (!force && homeCommunityInFlight) {
+      if (!preferCache) {
+        container.innerHTML = '<div class="loading-spinner" style="grid-column: 1 / -1; padding: 30px 0;"><div class="spinner"></div></div>';
+      }
+      await homeCommunityInFlight;
+      return;
+    }
 
     if (!initSupabaseClient()) {
       container.innerHTML = `<div class="empty-state small" style="grid-column: 1 / -1;">
@@ -2798,56 +3015,84 @@
     }
 
     const limit = isSuperMode() ? 8 : 10;
-    container.innerHTML = '<div class="loading-spinner" style="grid-column: 1 / -1; padding: 30px 0;"><div class="spinner"></div></div>';
-
-    const { data, error } = await supabase
-      .from('song_play_stats')
-      .select('video_id,title,author,play_count')
-      .order('play_count', { ascending: false })
-      .limit(limit);
-
-    if (error) {
-      console.warn('[MiGu] loadCommunityChart:', error.message);
-      container.innerHTML = `<div class="empty-state small" style="grid-column: 1 / -1;">
-        <p>Không tải được BXH — kiểm tra bảng <code>song_play_stats</code> và policy (xem <code>supabase/migrations</code>).</p>
-      </div>`;
-      if (btn) btn.style.display = 'none';
-      state.communityChartSongs = [];
-      return;
+    if (!preferCache || !homeCommunityCache) {
+      container.innerHTML = '<div class="loading-spinner" style="grid-column: 1 / -1; padding: 30px 0;"><div class="spinner"></div></div>';
+    } else {
+      renderCommunityChartRows(homeCommunityCache.rows || []);
     }
 
-    const rows = (data || []).map((row, i) => ({
-      videoId: row.video_id,
-      title: row.title || 'Không có tiêu đề',
-      author: row.author || '',
-      thumbnail: `https://i.ytimg.com/vi/${row.video_id}/mqdefault.jpg`,
-      duration: 0,
-      plays: Number(row.play_count) || 0,
-      rank: i + 1,
-    }));
+    homeCommunityInFlight = (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('song_play_stats')
+          .select('video_id,title,author,play_count')
+          .order('play_count', { ascending: false })
+          .limit(limit);
 
-    state.communityChartSongs = rows.map((r) => ({
-      videoId: r.videoId,
-      title: r.title,
-      author: r.author,
-      thumbnail: r.thumbnail,
-      duration: 0,
-    }));
+        if (error) {
+          console.warn('[MiGu] loadCommunityChart:', error.message);
+          if (!homeCommunityCache) {
+            container.innerHTML = `<div class="empty-state small" style="grid-column: 1 / -1;">
+              <p>Không tải được BXH — kiểm tra bảng <code>song_play_stats</code> và policy (xem <code>supabase/migrations</code>).</p>
+            </div>`;
+            if (btn) btn.style.display = 'none';
+            state.communityChartSongs = [];
+          }
+          return;
+        }
 
-    if (rows.length === 0) {
-      container.innerHTML = `<div class="empty-state small" style="grid-column: 1 / -1;">
-        <p>Chưa có dữ liệu — phát <strong>hết</strong> một bài để +1 lên bảng</p>
-      </div>`;
-      if (btn) btn.style.display = 'none';
-      return;
-    }
+        const rows = (data || []).map((row, i) => ({
+          videoId: row.video_id,
+          title: row.title || 'Không có tiêu đề',
+          author: row.author || '',
+          thumbnail: `https://i.ytimg.com/vi/${row.video_id}/mqdefault.jpg`,
+          duration: 0,
+          plays: Number(row.play_count) || 0,
+          rank: i + 1,
+        }));
 
-    if (btn) btn.style.display = '';
-    container.innerHTML = rows.map((s) => renderChartSongCard(s)).join('');
-    bindCommunityChartCards(container);
+        homeCommunityCache = { rows, t: Date.now() };
+        renderCommunityChartRows(rows);
+      } finally {
+        homeCommunityInFlight = null;
+      }
+    })();
+
+    await homeCommunityInFlight;
   }
 
-  async function loadPersonalizedRecommendations() {
+  function renderPersonalizedRows(rows) {
+    const container = $('#recommended-container');
+    if (!container) return;
+    const results = Array.isArray(rows) ? rows : [];
+    if (results.length === 0) {
+      container.innerHTML = `<div class="empty-state small" style="grid-column: 1 / -1;">
+        <p>Chưa đủ dữ liệu để đề xuất</p>
+      </div>`;
+      return;
+    }
+
+    container.innerHTML = results.map(song => `
+      <div class="song-card" data-id="${song.videoId}" data-reason="${esc(song.reason || '')}">
+        <img class="song-card-thumb" src="${song.thumbnail}" alt="" loading="lazy">
+        <div class="song-card-overlay">
+          <div class="song-card-play">
+            <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+          </div>
+        </div>
+        <span class="song-card-duration">${fmtDur(song.duration)}</span>
+        <div class="song-card-info">
+          <div class="song-card-title">${esc(song.title)}</div>
+          <div class="song-card-artist">${esc(song.author)}</div>
+          <div class="song-card-artist" style="color: var(--accent); font-size: 11px;">${esc(song.reason || 'Đề xuất cho bạn')}</div>
+        </div>
+      </div>
+    `).join('');
+    bindSongCards(container);
+  }
+
+  async function loadPersonalizedRecommendations(options = {}) {
+    const { preferCache = false, force = false } = options;
     const container = $('#recommended-container');
     if (!container) return;
     if (isSuperMode()) {
@@ -2855,6 +3100,7 @@
       return;
     }
     seedHistoryFromQueueIfNeeded();
+    const historySig = getHistorySignature();
 
     if (!state.listeningHistory || state.listeningHistory.length < 3) {
       container.innerHTML = `<div class="empty-state small" style="grid-column: 1 / -1;">
@@ -2863,45 +3109,54 @@
       return;
     }
 
-    container.innerHTML = '<div class="loading-spinner" style="grid-column: 1 / -1; padding: 30px 0;"><div class="spinner"></div></div>';
+    const canUseCache =
+      !force &&
+      preferCache &&
+      isFreshHomeCache(homePersonalizedCache) &&
+      homePersonalizedCache.sig === historySig;
 
-    try {
-      const res = await fetch('/api/recommend', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ history: state.listeningHistory.slice(-50) })
-      });
-      const data = await res.json();
-      const results = Array.isArray(data.results) ? data.results : [];
-      if (results.length === 0) {
-        container.innerHTML = `<div class="empty-state small" style="grid-column: 1 / -1;">
-          <p>Chưa đủ dữ liệu để đề xuất</p>
-        </div>`;
-        return;
-      }
-
-      container.innerHTML = results.map(song => `
-        <div class="song-card" data-id="${song.videoId}" data-reason="${esc(song.reason || '')}">
-          <img class="song-card-thumb" src="${song.thumbnail}" alt="" loading="lazy">
-          <div class="song-card-overlay">
-            <div class="song-card-play">
-              <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6 3 20 12 6 21 6 3"/></svg>
-            </div>
-          </div>
-          <span class="song-card-duration">${fmtDur(song.duration)}</span>
-          <div class="song-card-info">
-            <div class="song-card-title">${esc(song.title)}</div>
-            <div class="song-card-artist">${esc(song.author)}</div>
-            <div class="song-card-artist" style="color: var(--accent); font-size: 11px;">${esc(song.reason || 'Đề xuất cho bạn')}</div>
-          </div>
-        </div>
-      `).join('');
-      bindSongCards(container);
-    } catch (err) {
-      container.innerHTML = `<div class="empty-state small" style="grid-column: 1 / -1;">
-        <p>Không tải được gợi ý cá nhân</p>
-      </div>`;
+    if (canUseCache) {
+      renderPersonalizedRows(homePersonalizedCache.rows || []);
+      return;
     }
+
+    if (!force && homePersonalizedInFlight) {
+      if (!preferCache) {
+        container.innerHTML = '<div class="loading-spinner" style="grid-column: 1 / -1; padding: 30px 0;"><div class="spinner"></div></div>';
+      }
+      await homePersonalizedInFlight;
+      return;
+    }
+
+    if (!preferCache || !homePersonalizedCache || homePersonalizedCache.sig !== historySig) {
+      container.innerHTML = '<div class="loading-spinner" style="grid-column: 1 / -1; padding: 30px 0;"><div class="spinner"></div></div>';
+    } else {
+      renderPersonalizedRows(homePersonalizedCache.rows || []);
+    }
+
+    homePersonalizedInFlight = (async () => {
+      try {
+        const res = await fetch('/api/recommend', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ history: state.listeningHistory.slice(-50) })
+        });
+        const data = await res.json();
+        const results = Array.isArray(data.results) ? data.results : [];
+        homePersonalizedCache = { rows: results, t: Date.now(), sig: historySig };
+        renderPersonalizedRows(results);
+      } catch (err) {
+        if (!homePersonalizedCache || homePersonalizedCache.sig !== historySig) {
+          container.innerHTML = `<div class="empty-state small" style="grid-column: 1 / -1;">
+            <p>Không tải được gợi ý cá nhân</p>
+          </div>`;
+        }
+      } finally {
+        homePersonalizedInFlight = null;
+      }
+    })();
+
+    await homePersonalizedInFlight;
   }
 
   function renderSongCard(song) {
@@ -2923,36 +3178,36 @@
 
   /** Top cộng đồng: trong phòng chỉ thêm hàng chờ phòng; ngoài phòng phát luôn. */
   function bindCommunityChartCards(container) {
-    container.querySelectorAll('.song-card').forEach((card) => {
-      card.addEventListener('click', () => {
-        const durEl = card.querySelector('.song-card-duration');
-        const song = {
-          videoId: card.dataset.id,
-          title: card.querySelector('.song-card-title')?.textContent || '',
-          author: card.querySelector('.song-card-artist')?.textContent || '',
-          thumbnail: card.querySelector('.song-card-thumb')?.src || '',
-          duration: durEl ? parseDur(durEl.textContent) : 0,
-        };
-        if (roomCode) addToQueue(song);
-        else playSong(song);
-      });
-    });
+    container.onclick = (e) => {
+      const card = e.target.closest('.song-card');
+      if (!card || !container.contains(card)) return;
+      const durEl = card.querySelector('.song-card-duration');
+      const song = {
+        videoId: card.dataset.id,
+        title: card.querySelector('.song-card-title')?.textContent || '',
+        author: card.querySelector('.song-card-artist')?.textContent || '',
+        thumbnail: card.querySelector('.song-card-thumb')?.src || '',
+        duration: durEl ? parseDur(durEl.textContent) : 0,
+      };
+      if (roomCode) addToQueue(song);
+      else playSong(song);
+    };
   }
 
   function bindSongCards(container) {
-    container.querySelectorAll('.song-card').forEach((card) => {
-      card.addEventListener('click', () => {
-        const durEl = card.querySelector('.song-card-duration');
-        const song = {
-          videoId: card.dataset.id,
-          title: card.querySelector('.song-card-title')?.textContent || '',
-          author: card.querySelector('.song-card-artist')?.textContent || '',
-          thumbnail: card.querySelector('.song-card-thumb')?.src || '',
-          duration: durEl ? parseDur(durEl.textContent) : 0,
-        };
-        playSong(song);
-      });
-    });
+    container.onclick = (e) => {
+      const card = e.target.closest('.song-card');
+      if (!card || !container.contains(card)) return;
+      const durEl = card.querySelector('.song-card-duration');
+      const song = {
+        videoId: card.dataset.id,
+        title: card.querySelector('.song-card-title')?.textContent || '',
+        author: card.querySelector('.song-card-artist')?.textContent || '',
+        thumbnail: card.querySelector('.song-card-thumb')?.src || '',
+        duration: durEl ? parseDur(durEl.textContent) : 0,
+      };
+      playSong(song);
+    };
   }
 
   // ── Playlists / Library ───────────────────────────────────────
@@ -3049,74 +3304,38 @@
     });
   }
 
-  let lastUpdaterProgressToast = -1;
   let electronUpdaterUiWired = false;
-
   function setupElectronUpdaterUI() {
     if (!window.electronAPI?.onUpdateEvent || electronUpdaterUiWired) return;
     electronUpdaterUiWired = true;
     window.electronAPI.onUpdateEvent(async (ev) => {
       if (!ev || !ev.type) return;
-      switch (ev.type) {
-        case 'dev-mode':
-          toast(ev.message || 'Bản dev không kiểm tra cập nhật từ GitHub.', 'info');
-          break;
-        case 'checking':
-          break;
-        case 'available':
-          lastUpdaterProgressToast = -1;
-          {
-            let notes = '';
-            if (typeof ev.releaseNotes === 'string') notes = ev.releaseNotes.trim();
-            else if (Array.isArray(ev.releaseNotes)) {
-              notes = ev.releaseNotes
-                .map((n) => (typeof n === 'string' ? n : n && (n.body || n.note || '')))
-                .filter(Boolean)
-                .join('\n')
-                .trim();
-            }
-            notes = notes.slice(0, 800);
-            const extra = notes ? `\n\n${notes}` : '';
-            await showConfirmModal({
-              title: `MiGu Music — Bản mới v${ev.version || '?'}`,
-              message: `MiGu Music đang tải bản cài mới tự động. Xong sẽ hỏi có muốn khởi động lại không.${extra}`,
-              confirmText: 'Đã hiểu',
-              cancelText: 'Đóng',
-            });
-          }
-          break;
-        case 'progress':
-          if (ev.percent >= 99 || ev.percent - lastUpdaterProgressToast >= 18) {
-            lastUpdaterProgressToast = ev.percent;
-            toast(`MiGu Music — đang tải cập nhật: ${ev.percent}%`, 'info');
-          }
-          break;
-        case 'downloaded': {
-          const ok = await showConfirmModal({
-            title: 'MiGu Music — Cập nhật đã tải xong',
-            message: `MiGu Music v${ev.version || 'mới'} đã sẵn sàng. Khởi động lại để hoàn tất cài đặt?`,
-            confirmText: 'Khởi động lại',
-            cancelText: 'Để sau',
-          });
-          if (ok && window.electronAPI.quitAndInstall) window.electronAPI.quitAndInstall();
-          break;
-        }
-        case 'not-available':
-          if (ev.fromManual) {
-            const rv = ev.remoteVersion ? ` · Server: v${ev.remoteVersion}` : '';
-            toast(`Phiên bản trên máy: v${ev.version || '?'}${rv}`, 'success');
-          }
-          break;
-        case 'error':
-          await showConfirmModal({
-            title: 'MiGu Music — Lỗi cập nhật',
-            message: ev.message || 'Lỗi không xác định.',
-            confirmText: 'Đóng',
-            cancelText: 'Đóng',
-          });
-          break;
-        default:
-          break;
+      if (ev.type === 'dev-mode' && ev.message) {
+        toast(ev.message, 'info');
+        return;
+      }
+      if (ev.type === 'not-available' && ev.fromManual) {
+        const rv = ev.remoteVersion ? ` · Server: v${ev.remoteVersion}` : '';
+        toast(`Phiên bản trên máy: v${ev.version || '?'}${rv}`, 'success');
+        return;
+      }
+      if (ev.type === 'downloaded') {
+        const ok = await showConfirmModal({
+          title: 'MiGu Music — Cập nhật đã tải xong',
+          message: `MiGu Music v${ev.version || 'mới'} đã sẵn sàng. Khởi động lại để hoàn tất cài đặt?`,
+          confirmText: 'Khởi động lại',
+          cancelText: 'Để sau',
+        });
+        if (ok) window.electronAPI?.quitAndInstall?.();
+        return;
+      }
+      if (ev.type === 'error') {
+        await showConfirmModal({
+          title: 'MiGu Music — Lỗi cập nhật',
+          message: ev.message || 'Lỗi không xác định.',
+          confirmText: 'Đóng',
+          cancelText: 'Đóng',
+        });
       }
     });
   }
