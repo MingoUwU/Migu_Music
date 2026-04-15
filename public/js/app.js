@@ -3277,7 +3277,7 @@
 
       content.innerHTML = `
         <h3>${esc(title)}</h3>
-        <p style="margin-top:8px;color:var(--text-secondary);line-height:1.5">${esc(message)}</p>
+        <p style="margin-top:8px;color:var(--text-secondary);line-height:1.6;white-space:pre-line">${esc(message)}</p>
         <div class="modal-actions" style="margin-top:16px;display:flex;justify-content:flex-end;gap:10px;">
           <button class="btn-text" id="confirm-cancel">${esc(cancelText)}</button>
           <button class="${danger ? 'btn-text' : 'btn-primary'}" id="confirm-ok"
@@ -3342,6 +3342,14 @@
 
   // ── Keyboard ──────────────────────────────────────────────────
   function setupKeyboardShortcuts() {
+    const shortcutsBtn = $('#btn-shortcuts-help');
+    if (shortcutsBtn) {
+      shortcutsBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        openShortcutsHelp();
+      });
+    }
+
     document.addEventListener('keydown', (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
       const isGuest = roomCode && !isRoomHost;
@@ -3353,6 +3361,12 @@
           $('#np-btn-play')?.click();
           break;
         case 'ArrowRight':
+          if (e.ctrlKey || e.metaKey) {
+            if (isGuest) return;
+            e.preventDefault();
+            nextTrack();
+            return;
+          }
           if (!canScrubTimeline()) return;
           if (audio.duration) {
             audio.currentTime = Math.min(audio.duration, audio.currentTime + 10);
@@ -3360,14 +3374,30 @@
           }
           break;
         case 'ArrowLeft':
+          if (e.ctrlKey || e.metaKey) {
+            if (isGuest) return;
+            e.preventDefault();
+            prevTrack();
+            return;
+          }
           if (!canScrubTimeline()) return;
           if (audio.duration) {
             audio.currentTime = Math.max(0, audio.currentTime - 10);
             if (roomCode && isRoomHost) emitRoomState({ currentTime: audio.currentTime });
           }
           break;
-        case 'ArrowUp': e.preventDefault(); setVol(Math.min(100, state.volume + 5)); break;
-        case 'ArrowDown': e.preventDefault(); setVol(Math.max(0, state.volume - 5)); break;
+        case 'ArrowUp':
+          if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            setVol(Math.min(100, state.volume + 5));
+          }
+          break;
+        case 'ArrowDown':
+          if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            setVol(Math.max(0, state.volume - 5));
+          }
+          break;
         case 'n': case 'N':
           if (isGuest) return;
           nextTrack();
@@ -3375,6 +3405,32 @@
         case 'p': case 'P':
           if (isGuest) return;
           prevTrack();
+          break;
+        case 's': case 'S':
+          // Stop only for personal playback (outside room).
+          if (roomCode) return;
+          e.preventDefault();
+          stopPersonalPlayback();
+          break;
+        case 'm': case 'M':
+          e.preventDefault();
+          toggleMuteShortcut();
+          break;
+        case 'k': case 'K':
+          if (!(e.ctrlKey || e.metaKey)) return;
+          e.preventDefault();
+          switchView('search');
+          setTimeout(() => $('#search-input')?.focus(), 0);
+          break;
+        case 'Escape':
+          if (state.currentView === 'nowplaying') {
+            e.preventDefault();
+            switchView('home');
+          }
+          break;
+        case '?':
+          e.preventDefault();
+          openShortcutsHelp();
           break;
       }
     });
@@ -3385,6 +3441,42 @@
       $('#np-volume-slider').value = v;
       $('#pb-volume').value = v;
       saveState();
+    }
+
+    function toggleMuteShortcut() {
+      if (audio.volume > 0) {
+        state._pv = state.volume;
+        setVol(0);
+      } else {
+        setVol(state._pv || 75);
+      }
+    }
+
+    function stopPersonalPlayback() {
+      if (!audio.src) return;
+      audio.pause();
+      try { audio.currentTime = 0; } catch (_) { /* ignore */ }
+      state.isPlaying = false;
+      updatePlayBtns(false);
+      updateDiscordRPC();
+      toast('Đã dừng phát nhạc cá nhân', 'info');
+    }
+
+    async function openShortcutsHelp() {
+      await showConfirmModal({
+        title: 'Phím tắt MiGu Music',
+        message:
+          '• Space: Play/Pause\n' +
+          '• Ctrl + Right / Left: Next / Prev\n' +
+          '• Ctrl + Up / Down: Tăng / Giảm âm lượng\n' +
+          '• M: Tắt / Bật âm thanh\n' +
+          '• S: Dừng nhạc cá nhân\n' +
+          '• Ctrl + K: Mở tìm kiếm\n' +
+          '• Esc: Thoát Now Playing\n' +
+          '• ?: Mở hướng dẫn phím tắt',
+        confirmText: 'Đã hiểu',
+        cancelText: 'Đóng',
+      });
     }
   }
 
