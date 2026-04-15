@@ -99,6 +99,18 @@ function createWindow() {
     }
   });
 
+  function emitVisibility(hidden) {
+    try {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('app-visibility', { hidden: !!hidden });
+      }
+    } catch (_) { /* ignore */ }
+  }
+
+  mainWindow.on('hide', () => emitVisibility(true));
+  mainWindow.on('show', () => emitVisibility(false));
+  mainWindow.on('minimize', () => emitVisibility(true));
+
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 

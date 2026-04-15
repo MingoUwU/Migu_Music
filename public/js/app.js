@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════
-   MiGu Music Player v2.1.9 — iOS 26 Liquid Glass Edition
+   MiGu Music Player v2.2.0 — iOS 26 Liquid Glass Edition
    ═══════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -33,6 +33,7 @@
     lastRecommendationVideos: [],
     /** Tab gợi ý NP: mixed | type | related */
     activeSuggestTab: 'mixed',
+    backgroundSaver: false,
   };
 
   let socket = null;
@@ -371,6 +372,23 @@
     audio.volume = state.volume / 100;
     $('#fav-count').textContent = state.favorites.length;
 
+    // Background saver: when window is hidden/minimized to tray.
+    if (window.electronAPI?.onAppVisibility) {
+      window.electronAPI.onAppVisibility((payload) => {
+        const hidden = !!payload?.hidden;
+        state.backgroundSaver = hidden;
+
+        // Stop/disable expensive visuals when hidden.
+        if (hidden) {
+          window.__miguVisualizer?.stop?.();
+          setupParticles(); // will hide particles when backgroundSaver=true
+        } else {
+          setupParticles();
+          if (state.currentView === 'nowplaying') window.__miguVisualizer?.start?.();
+        }
+      });
+    }
+
     // Allow manual update check by clicking version label
     const ver = $('.logo-version');
     if (ver) {
@@ -420,6 +438,10 @@
 
   function isSuperMode() {
     return !!state.superSaverMode;
+  }
+
+  function isBackgroundSaver() {
+    return !!state.backgroundSaver;
   }
 
   function setupPerformanceToggle() {
@@ -1349,7 +1371,7 @@
     const c = $('#particles');
     if (!c) return;
     c.innerHTML = '';
-    if (isSuperMode()) {
+    if (isSuperMode() || isBackgroundSaver()) {
       c.style.display = 'none';
       return;
     }
@@ -1412,6 +1434,10 @@
       loadCommunityChart({ preferCache: true });
       if (!isSuperMode()) loadPersonalizedRecommendations({ preferCache: true });
     }
+
+    // Visualizer loop: only run when actually visible.
+    if (view === 'nowplaying') window.__miguVisualizer?.start?.();
+    else window.__miguVisualizer?.stop?.();
 
     resetIdle();
   }
@@ -1868,38 +1894,37 @@
     if (!canvas) return;
 
     const ctx = canvas.getContext('2d');
+    let visRafId = null;
 
-    const initCtx = () => {
-      if (audioCtx) return;
-      console.log('[MiGu] Initializing Web Audio Context...');
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      analyser = audioCtx.createAnalyser();
-      source = audioCtx.createMediaElementSource(audio);
-      source.connect(analyser);
-      analyser.connect(audioCtx.destination);
-      analyser.fftSize = 128;
+    function shouldDraw() {
+      if (!analyser) return false;
+      if (isSuperMode()) return false;
+      if (state.currentView !== 'nowplaying') return false;
+      if (state.lowPerformanceMode && !state.isPlaying) return false;
+      return true;
+    }
 
-      drawVisualizer();
-      window.removeEventListener('click', initCtx);
-      window.removeEventListener('keydown', initCtx);
-    };
+    function stopLoop() {
+      if (visRafId) {
+        cancelAnimationFrame(visRafId);
+        visRafId = null;
+      }
+    }
 
-    window.addEventListener('click', initCtx);
-    window.addEventListener('keydown', initCtx);
-
-    function drawVisualizer() {
-      if (!analyser) return;
-      requestAnimationFrame(drawVisualizer);
-      if (isSuperMode()) return;
+    function tick() {
+      if (!shouldDraw()) {
+        stopLoop();
+        return;
+      }
 
       if (state.lowPerformanceMode) {
         const now = Date.now();
-        if (now - state.lastVisualizerFrameAt < 66) return; // ~15 FPS
+        if (now - state.lastVisualizerFrameAt < 66) {
+          visRafId = requestAnimationFrame(tick);
+          return;
+        }
         state.lastVisualizerFrameAt = now;
       }
-
-      if (state.currentView !== 'nowplaying') return;
-      if (state.lowPerformanceMode && !state.isPlaying) return;
 
       const bufferLength = analyser.frequencyBinCount;
       const dataArray = new Uint8Array(bufferLength);
@@ -1929,7 +1954,36 @@
         ctx.lineTo(x2, y2);
         ctx.stroke();
       }
+
+      visRafId = requestAnimationFrame(tick);
     }
+
+    function startLoopIfNeeded() {
+      if (visRafId) return;
+      if (!shouldDraw()) return;
+      visRafId = requestAnimationFrame(tick);
+    }
+
+    // allow other parts to kick/stop the loop
+    window.__miguVisualizer = { start: startLoopIfNeeded, stop: stopLoop };
+
+    const initCtx = () => {
+      if (audioCtx) return;
+      console.log('[MiGu] Initializing Web Audio Context...');
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      analyser = audioCtx.createAnalyser();
+      source = audioCtx.createMediaElementSource(audio);
+      source.connect(analyser);
+      analyser.connect(audioCtx.destination);
+      analyser.fftSize = 128;
+
+      startLoopIfNeeded();
+      window.removeEventListener('click', initCtx);
+      window.removeEventListener('keydown', initCtx);
+    };
+
+    window.addEventListener('click', initCtx);
+    window.addEventListener('keydown', initCtx);
   }
 
   // ── Player Controls ───────────────────────────────────────────
