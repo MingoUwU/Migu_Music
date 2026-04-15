@@ -1335,6 +1335,15 @@ img    { display: block; max-width: 100%; }
 }
 .queue-item:hover { background: var(--glass-hover); }
 .queue-item.active { background: var(--accent-soft); }
+.queue-item.q-room-draggable { cursor: grab; }
+.queue-item.q-room-draggable.dragging {
+  opacity: 0.45;
+  cursor: grabbing;
+}
+.queue-item.q-room-draggable.drop-target {
+  outline: 1px dashed rgba(246, 92, 100, 0.8);
+  background: rgba(246, 92, 100, 0.12);
+}
 
 .queue-item-index { font-size: 11px; color: var(--text-tertiary); width: 18px; text-align: center; flex-shrink: 0; }
 .queue-item.active .queue-item-index { color: var(--accent); }

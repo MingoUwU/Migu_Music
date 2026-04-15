@@ -11,6 +11,13 @@ app.commandLine.appendSwitch('js-flags', '--max-old-space-size=512'); // Cân b�
 app.commandLine.appendSwitch('disable-site-isolation-trials'); // Giảm Overhead RAM của Chromium
 // ───────────────────────────────────────────────────────────────
 
+// ── Single Instance Lock ───────────────────────────────────────
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
+// ───────────────────────────────────────────────────────────────
+
 const PORT = 3000;
 const ICON_PATH = path.join(__dirname, 'public', 'icon.png');
 
@@ -18,6 +25,15 @@ let mainWindow;
 let tray;
 let manualUpdateCheck = false;
 let rendererReadyForUpdater = false;
+
+app.on('second-instance', () => {
+  // Reuse existing instance: show/focus instead of opening a new window.
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    if (!mainWindow.isVisible()) mainWindow.show();
+    mainWindow.focus();
+  }
+});
 
 /** Dùng generic + URL /releases/latest/download/ — ổn định hơn chỉ dựa vào GitHub API (ít bị chặn / lệch provider). */
 const MIGU_UPDATE_FEED_BASE =

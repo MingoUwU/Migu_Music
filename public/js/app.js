@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════
-   MiGu Music Player v2.2.1
+  MiGu Music Player v2.2.2
    ═══════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -699,8 +699,8 @@
       const input = $('#room-chat-input');
       const text = input.value.trim();
       if (text && roomChannel) {
-        roomChannel.send({ type: 'broadcast', event: 'chat', payload: { text } });
-        addChatMessage(text, true);
+        roomChannel.send({ type: 'broadcast', event: 'chat', payload: { text, senderId: myUserId } });
+        addChatMessage(text, true, myUserId);
         input.value = '';
       }
     });
@@ -939,7 +939,8 @@
         handleStateUpdate(payload);
       })
       .on('broadcast', { event: 'chat' }, ({ payload }) => {
-        addChatMessage(payload.text, false);
+        const senderId = payload?.senderId || null;
+        addChatMessage(payload.text, senderId === myUserId, senderId);
         toast(`Tin nhắn mới: ${payload.text}`, 'info');
       })
       .on('broadcast', { event: 'reaction' }, ({ payload }) => {
@@ -1247,10 +1248,32 @@
     }
   }
 
-  function addChatMessage(text, isSelf) {
+  function getRoomUserLabel(senderId) {
+    if (!senderId) return 'Guest';
+    const hostId = window.currentRoomHostId || null;
+    if (hostId && senderId === hostId) return 'Host';
+
+    const presence = roomChannel?.presenceState?.() || {};
+    const guests = [];
+    for (const [key, presences] of Object.entries(presence)) {
+      if (hostId && key === hostId) continue;
+      const joinedAt = Number(presences?.[0]?.joined_at);
+      guests.push({ key, joinedAt: Number.isFinite(joinedAt) ? joinedAt : Number.POSITIVE_INFINITY });
+    }
+
+    guests.sort((a, b) => (a.joinedAt - b.joinedAt) || a.key.localeCompare(b.key));
+    const rank = guests.findIndex((u) => u.key === senderId);
+    if (rank >= 0) return `Guest ${rank + 1}`;
+    return senderId === myUserId ? (isRoomHost ? 'Host' : 'Guest') : 'Guest';
+  }
+
+  function addChatMessage(text, isSelf, senderId = null) {
     const box = $('#room-chat-messages');
     if (!box) return;
     const el = document.createElement('div');
+    el.style.display = 'flex';
+    el.style.flexDirection = 'column';
+    el.style.gap = '4px';
     el.style.padding = '8px 12px';
     el.style.borderRadius = '16px';
     el.style.maxWidth = '85%';
@@ -1267,7 +1290,20 @@
       el.style.color = 'white';
       el.style.borderBottomLeftRadius = '4px';
     }
-    el.textContent = text;
+
+    const senderNameEl = document.createElement('div');
+    senderNameEl.textContent = getRoomUserLabel(senderId);
+    senderNameEl.style.fontSize = '11px';
+    senderNameEl.style.fontWeight = '600';
+    senderNameEl.style.opacity = isSelf ? '0.9' : '0.75';
+    senderNameEl.style.letterSpacing = '0.2px';
+
+    const msgEl = document.createElement('div');
+    msgEl.textContent = text;
+    msgEl.style.wordBreak = 'break-word';
+
+    el.appendChild(senderNameEl);
+    el.appendChild(msgEl);
     box.appendChild(el);
     box.scrollTop = box.scrollHeight;
   }
@@ -1297,53 +1333,35 @@
   function renderRoomQueue() {
     const container = $('#room-queue-container');
     if (!container) return;
+    const canManageRoomQueue = !!isRoomHost;
     const entries = isSuperMode()
       ? getWindowedEntries(state.roomQueue, state.currentIndex, SUPER_ROOM_QUEUE_RENDER_LIMIT)
       : state.roomQueue.map((item, index) => ({ item, index }));
     container.innerHTML = entries.map(({ item: song, index: i }) => `
-      <div class="queue-item ${state.currentSongInfo && song.videoId === state.currentSongInfo.videoId ? 'active' : ''}" style="margin-bottom:8px;" data-index="${i}">
+      <div class="queue-item ${state.currentSongInfo && song.videoId === state.currentSongInfo.videoId ? 'active' : ''} ${canManageRoomQueue ? 'q-room-draggable' : ''}" style="margin-bottom:8px;" data-index="${i}" ${canManageRoomQueue ? 'draggable="true"' : ''}>
         <span class="queue-item-index" style="color:var(--text-secondary);font-size:12px;width:20px;text-align:center;">${i + 1}</span>
         <img class="queue-item-thumb" src="${song.thumbnail}" alt="" loading="lazy" style="width:40px;height:40px;border-radius:4px;object-fit:cover;">
         <div class="queue-item-info">
           <div class="queue-item-title">${esc(song.title)}</div>
           <div class="queue-item-artist">${esc(song.author)}</div>
         </div>
-        <div class="queue-item-actions" style="margin-left:auto; display:flex; gap:5px;">
-           <button class="btn-icon q-room-up" data-index="${i}" title="Chuyển lên đợi phát">
-             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"/></svg>
-           </button>
-           <button class="btn-icon q-room-remove" data-index="${i}" title="Xóa">
-             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
-           </button>
-        </div>
+        ${canManageRoomQueue ? `
+          <div class="queue-item-actions" style="margin-left:auto; display:flex; gap:5px;">
+            <button class="btn-icon q-room-remove" data-index="${i}" title="Xóa">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
+        ` : ''}
       </div>
     `).join('');
 
     container.onclick = (e) => {
-      const upBtn = e.target.closest('.q-room-up');
-      if (upBtn) {
-        e.stopPropagation();
-        const idx = parseInt(upBtn.dataset.index, 10);
-        if (idx > 0 && idx !== state.currentIndex) {
-          let target = state.currentIndex >= 0 ? state.currentIndex + 1 : 0;
-          if (target > idx) target--; // Compensate for the element we are about to remove
-
-          const song = state.roomQueue.splice(idx, 1)[0];
-          state.roomQueue.splice(target, 0, song);
-
-          if (idx < state.currentIndex && target >= state.currentIndex) state.currentIndex--;
-          else if (idx > state.currentIndex && target <= state.currentIndex) state.currentIndex++;
-
-          renderRoomQueue();
-          if (state.activeQueueTab === 'room') renderQueue();
-          saveState();
-          emitRoomState({ queue: state.roomQueue });
-        }
-        return;
-      }
-
       const removeBtn = e.target.closest('.q-room-remove');
       if (removeBtn) {
+        if (!isRoomHost) {
+          toast('Chỉ Host mới có quyền chỉnh hàng chờ phòng', 'info');
+          return;
+        }
         e.stopPropagation();
         const idx = parseInt(removeBtn.dataset.index, 10);
         state.roomQueue.splice(idx, 1);
@@ -1362,6 +1380,64 @@
         saveState();
         emitRoomState({ queue: state.roomQueue });
       }
+    };
+
+    if (!canManageRoomQueue) return;
+
+    let dragFromIndex = -1;
+    const clearDragMarkers = () => {
+      container.querySelectorAll('.queue-item').forEach((el) => el.classList.remove('drop-target'));
+    };
+
+    container.ondragstart = (e) => {
+      const row = e.target.closest('.queue-item.q-room-draggable');
+      if (!row) return;
+      dragFromIndex = parseInt(row.dataset.index, 10);
+      row.classList.add('dragging');
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', String(dragFromIndex));
+      }
+    };
+
+    container.ondragend = (e) => {
+      const row = e.target.closest('.queue-item.q-room-draggable');
+      if (row) row.classList.remove('dragging');
+      clearDragMarkers();
+      dragFromIndex = -1;
+    };
+
+    container.ondragover = (e) => {
+      if (dragFromIndex < 0) return;
+      const row = e.target.closest('.queue-item.q-room-draggable');
+      if (!row) return;
+      e.preventDefault();
+      clearDragMarkers();
+      row.classList.add('drop-target');
+    };
+
+    container.ondrop = (e) => {
+      if (dragFromIndex < 0) return;
+      const row = e.target.closest('.queue-item.q-room-draggable');
+      if (!row) return;
+      e.preventDefault();
+      const dropIndex = parseInt(row.dataset.index, 10);
+      clearDragMarkers();
+      if (!Number.isFinite(dropIndex) || dropIndex === dragFromIndex) return;
+
+      const moved = state.roomQueue.splice(dragFromIndex, 1)[0];
+      state.roomQueue.splice(dropIndex, 0, moved);
+
+      if (dragFromIndex < state.currentIndex && dropIndex >= state.currentIndex) state.currentIndex--;
+      else if (dragFromIndex > state.currentIndex && dropIndex <= state.currentIndex) state.currentIndex++;
+      else if (dragFromIndex === state.currentIndex) state.currentIndex = dropIndex;
+
+      renderRoomQueue();
+      if (state.activeQueueTab === 'room') renderQueue();
+      saveState();
+      emitRoomState({ queue: state.roomQueue });
+      toast('Đã đổi thứ tự hàng chờ phòng', 'success');
+      dragFromIndex = -1;
     };
   }
 
@@ -2018,9 +2094,12 @@
       setTimeout(() => { endTransitionLock = false; }, 400);
     };
 
+    let toggleInFlight = false;
     const toggle = () => {
       if (!audio.src) return;
-      if (state.isPlaying) {
+      if (toggleInFlight) return;
+      const actuallyPlaying = !audio.paused && !audio.ended;
+      if (actuallyPlaying) {
         audio.pause();
         state.isPlaying = false;
         updatePlayBtns(false);
@@ -2028,6 +2107,7 @@
         updateDiscordRPC();
       } else {
         // updatePlayBtns must be called AFTER play() resolves
+        toggleInFlight = true;
         audio.play().then(() => {
           state.isPlaying = true;
           updatePlayBtns(true);
@@ -2035,6 +2115,8 @@
           updateDiscordRPC();
         }).catch((err) => {
           console.warn('Play rejected:', err);
+        }).finally(() => {
+          toggleInFlight = false;
         });
       }
     };
@@ -2093,6 +2175,17 @@
     });
 
     // Audio events
+    audio.addEventListener('play', () => {
+      state.isPlaying = true;
+      updatePlayBtns(true);
+    });
+    audio.addEventListener('pause', () => {
+      // Ignore transient pause when source is being switched.
+      if (!audio.src) return;
+      state.isPlaying = false;
+      updatePlayBtns(false);
+    });
+
     audio.addEventListener('timeupdate', () => {
       if (!audio.duration) return;
       watchdogPrevTime = audio.currentTime;
