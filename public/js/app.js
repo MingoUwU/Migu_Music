@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════
-  MiGu Music Player v2.2.3
+  MiGu Music Player v2.2.4
    ═══════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -358,7 +358,20 @@
     }
     setupMediaSession();
     setupQueueTabs();
-    setupRoom(); // Initialize socket
+    // Lazy init room realtime to reduce CPU when user just opens the app.
+    let roomFeatureInitialized = false;
+    const hasRoomParam = window.location.search.includes('room=');
+    if (hasRoomParam) {
+      roomFeatureInitialized = true;
+      setupRoom();
+    } else {
+      $('#nav-btn-room')?.addEventListener('click', () => {
+        if (!roomFeatureInitialized) {
+          roomFeatureInitialized = true;
+          setupRoom();
+        }
+      });
+    }
     setupVisualizer(); // Initialize Web Audio API
     setupTrendingTabs();
     setupSuggestTabs();
@@ -1504,13 +1517,16 @@
   function setupParticles() {
     const c = $('#particles');
     if (!c) return;
-    c.innerHTML = '';
-    if (isSuperMode() || isBackgroundSaver()) {
+    // Giảm CPU: chỉ chạy hạt khi đang phát & đang ở màn hình có visual chính.
+    if (isSuperMode() || isBackgroundSaver() || !(state.isPlaying && (state.currentView === 'nowplaying' || state.currentView === 'room'))) {
       c.style.display = 'none';
       return;
     }
+
+    c.innerHTML = '';
     c.style.display = '';
-    const particleCount = state.lowPerformanceMode ? 8 : 25;
+    // Giảm số lượng hạt để hạn chế load CPU/GPU.
+    const particleCount = state.lowPerformanceMode ? 6 : 12;
     for (let i = 0; i < particleCount; i++) {
       const p = document.createElement('div');
       p.className = 'particle';
@@ -1717,6 +1733,7 @@
   }
 
   // ── Paste Link ────────────────────────────────────────────────
+  let pasteImportInFlight = false;
   function setupPasteLink() {
     const input = $('#paste-input');
     const btn = $('#btn-paste-play');
@@ -1749,14 +1766,28 @@
 
   async function handlePaste(url) {
     if (!url) return;
+    if (pasteImportInFlight) return;
+    pasteImportInFlight = true;
+    const pasteBtn = $('#btn-paste-play');
+    if (pasteBtn) pasteBtn.disabled = true;
     const ids = extractId(url);
-    if (!ids) { toast('Link không hợp lệ', 'error'); return; }
+    if (!ids) {
+      toast('Link không hợp lệ', 'error');
+      pasteImportInFlight = false;
+      if (pasteBtn) pasteBtn.disabled = false;
+      return;
+    }
 
     const { videoId, playlistId } = ids;
 
     // If it's a playlist, we prioritize that flow
     if (playlistId) {
-      handlePlaylistPaste(playlistId, videoId);
+      try {
+        await handlePlaylistPaste(playlistId, videoId);
+      } finally {
+        pasteImportInFlight = false;
+        if (pasteBtn) pasteBtn.disabled = false;
+      }
       return;
     }
 
@@ -1784,6 +1815,9 @@
     } catch (err) {
       preview.innerHTML = '<div class="empty-state small"><p>Không thể tải thông tin</p></div>';
       toast('Lỗi tải video', 'error');
+    } finally {
+      pasteImportInFlight = false;
+      if (pasteBtn) pasteBtn.disabled = false;
     }
   }
 
@@ -2033,11 +2067,19 @@
 
     const ctx = canvas.getContext('2d');
     let visRafId = null;
+    let dataArray = null;
+    let bufferLength = 0;
+    const CANVAS_SIZE = 260;
+    canvas.width = CANVAS_SIZE;
+    canvas.height = CANVAS_SIZE;
 
     function shouldDraw() {
       if (!analyser) return false;
       if (isSuperMode()) return false;
       if (state.currentView !== 'nowplaying') return false;
+      // Giảm CPU: chỉ vẽ khi thật sự đang play.
+      if (!state.isPlaying) return false;
+      if (audio?.paused || audio?.ended) return false;
       if (state.lowPerformanceMode && !state.isPlaying) return false;
       return true;
     }
@@ -2064,12 +2106,15 @@
         state.lastVisualizerFrameAt = now;
       }
 
-      const bufferLength = analyser.frequencyBinCount;
-      const dataArray = new Uint8Array(bufferLength);
+      const nextBufferLength = analyser.frequencyBinCount;
+      if (!dataArray || bufferLength !== nextBufferLength) {
+        bufferLength = nextBufferLength;
+        dataArray = new Uint8Array(bufferLength);
+      }
       analyser.getByteFrequencyData(dataArray);
 
-      const w = canvas.width = 260;
-      const h = canvas.height = 260;
+      const w = canvas.width;
+      const h = canvas.height;
       ctx.clearRect(0, 0, w, h);
 
       const centerX = w / 2;
@@ -2141,6 +2186,8 @@
       state.isPlaying = false;
       updatePlayBtns(false);
       emitRoomState({ isPlaying: false });
+      // Stop watchdog to reduce idle CPU.
+      stopPlaybackWatchdogTimer?.();
 
       if (state.repeat === 'one') {
         audio.currentTime = 0;
@@ -2254,12 +2301,20 @@
     audio.addEventListener('play', () => {
       state.isPlaying = true;
       updatePlayBtns(true);
+      // Bật visualizer khi vừa bắt đầu play (kể cả khi init trước đó lúc đang pause).
+      window.__miguVisualizer?.start?.();
+      setupParticles();
+      // Start watchdog only when actually playing.
+      startPlaybackWatchdogTimer?.();
     });
     audio.addEventListener('pause', () => {
       // Ignore transient pause when source is being switched.
       if (!audio.src) return;
       state.isPlaying = false;
       updatePlayBtns(false);
+      window.__miguVisualizer?.stop?.();
+      stopPlaybackWatchdogTimer?.();
+      setupParticles();
     });
 
     audio.addEventListener('timeupdate', () => {
@@ -2313,67 +2368,79 @@
     });
 
     // Failsafe: some streams stall near end and never emit "ended"
-    if (playbackWatchdogTimer) clearInterval(playbackWatchdogTimer);
-    playbackWatchdogTimer = setInterval(() => {
-      if (!state.isPlaying || !audio.src) return;
-      const dur = Number(audio.duration || 0);
-      if (!Number.isFinite(dur) || dur <= 0) return;
+    // Reduce CPU: chỉ chạy watchdog khi đang play thật.
+    function startPlaybackWatchdogTimer() {
+      if (playbackWatchdogTimer) return;
+      playbackWatchdogTimer = setInterval(() => {
+        if (!state.isPlaying || !audio.src) return;
+        const dur = Number(audio.duration || 0);
+        if (!Number.isFinite(dur) || dur <= 0) return;
 
-      const cur = Number(audio.currentTime || 0);
-      const remaining = dur - cur;
-      const progressed = Math.abs(cur - watchdogPrevTime) > 0.02;
+        const cur = Number(audio.currentTime || 0);
+        const remaining = dur - cur;
+        const progressed = Math.abs(cur - watchdogPrevTime) > 0.02;
 
-      if (progressed) {
-        watchdogStallMs = 0;
-        watchdogPrevTime = cur;
-        return;
-      }
-
-      watchdogStallMs += 1000;
-
-      // Mid-song stall recovery: refresh stream and resume from stuck timestamp
-      if (remaining > 2.2 && watchdogStallMs >= 4500) {
-        if (stallRecoverAttempts < 2 && state.currentSongInfo?.videoId) {
-          stallRecoverAttempts++;
-          const resumeAt = Math.max(0, cur - 0.3);
-          pendingResumeTime = resumeAt;
-          const vid = encodeURIComponent(state.currentSongInfo.videoId);
-          audio.src = `/api/stream/${vid}?recover=${Date.now()}&r=${stallRecoverAttempts}`;
-          audio.load();
-          audio.play().then(() => {
-            state.isPlaying = true;
-            updatePlayBtns(true);
-          }).catch(() => { });
+        if (progressed) {
           watchdogStallMs = 0;
+          watchdogPrevTime = cur;
           return;
         }
 
-        // Recovery exhausted -> skip to avoid permanent freeze
-        handleTrackEnded(true);
-        return;
-      }
+        watchdogStallMs += 1000;
 
-      // Near end: nhẹ nhàng nudge timeline — decoder/buffer đôi khi bị kẹt vài giây
-      if (
-        remaining <= 20 &&
-        remaining > 0.06 &&
-        watchdogStallMs >= 600 &&
-        endStallNudgeCount < 10
-      ) {
-        endStallNudgeCount++;
-        try {
-          audio.currentTime = Math.min(cur + 0.12, dur - 0.03);
-        } catch (_) { /* ignore */ }
-        watchdogStallMs = 0;
-        watchdogPrevTime = Number(audio.currentTime || 0);
-        return;
-      }
+        // Mid-song stall recovery: refresh stream and resume from stuck timestamp
+        if (remaining > 2.2 && watchdogStallMs >= 4500) {
+          if (stallRecoverAttempts < 2 && state.currentSongInfo?.videoId) {
+            stallRecoverAttempts++;
+            const resumeAt = Math.max(0, cur - 0.3);
+            pendingResumeTime = resumeAt;
+            const vid = encodeURIComponent(state.currentSongInfo.videoId);
+            audio.src = `/api/stream/${vid}?recover=${Date.now()}&r=${stallRecoverAttempts}`;
+            audio.load();
+            audio.play().then(() => {
+              state.isPlaying = true;
+              updatePlayBtns(true);
+            }).catch(() => { });
+            watchdogStallMs = 0;
+            return;
+          }
 
-      // Chỉ ép chuyển bài khi đứng thật lâu (buffer cuối có thể mất >3s)
-      if (remaining <= 20 && watchdogStallMs >= 3500) {
-        handleTrackEnded(true);
-      }
-    }, 1000);
+          // Recovery exhausted -> skip to avoid permanent freeze
+          handleTrackEnded(true);
+          return;
+        }
+
+        // Near end: nhẹ nhàng nudge timeline — decoder/buffer đôi khi bị kẹt vài giây
+        if (
+          remaining <= 20 &&
+          remaining > 0.06 &&
+          watchdogStallMs >= 600 &&
+          endStallNudgeCount < 10
+        ) {
+          endStallNudgeCount++;
+          try {
+            audio.currentTime = Math.min(cur + 0.12, dur - 0.03);
+          } catch (_) { /* ignore */ }
+          watchdogStallMs = 0;
+          watchdogPrevTime = Number(audio.currentTime || 0);
+          return;
+        }
+
+        // Chỉ ép chuyển bài khi đứng thật lâu (buffer cuối có thể mất >3s)
+        if (remaining <= 20 && watchdogStallMs >= 3500) {
+          handleTrackEnded(true);
+        }
+      }, 1000);
+    }
+
+    function stopPlaybackWatchdogTimer() {
+      if (!playbackWatchdogTimer) return;
+      clearInterval(playbackWatchdogTimer);
+      playbackWatchdogTimer = null;
+    }
+
+    // Start immediately only if we are already playing.
+    if (state.isPlaying && audio.src) startPlaybackWatchdogTimer();
 
     // Favorite buttons
     $('#np-toggle-fav')?.addEventListener('click', () => {
