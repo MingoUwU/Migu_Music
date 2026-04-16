@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════
-  MiGu Music Player v2.2.2
+  MiGu Music Player v2.2.3
    ═══════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -651,10 +651,28 @@
       }
       roomCode = null;
       isRoomHost = false;
+      window.currentRoomHostId = null;
       clearGuestAutoplayUnlock();
       pendingHostSyncSeek = null;
+      window.targetSyncTime = null;
       hasShownSyncPrompt = false;
+      isProcessingRoomSync = false;
       if (globalLobbyChannel) globalLobbyChannel.untrack().catch(() => { });
+
+      try {
+        audio.pause();
+        audio.removeAttribute('src');
+        audio.load();
+      } catch (_) { /* ignore */ }
+      state.isPlaying = false;
+      state.roomQueue = [];
+      state.currentSongInfo = null;
+      state.currentIndex = -1;
+      updatePlayBtns(false);
+      updateUI(null);
+      showBar(false);
+      const chatBox = $('#room-chat-messages');
+      if (chatBox) chatBox.innerHTML = '';
 
       
       const tabRoom = $('#tab-room-queue');
@@ -668,9 +686,9 @@
       $('#room-setup-panel').style.display = 'block';
       $('#room-active-panel').style.display = 'none';
       applyHostPermissions();
-      updatePlayBtns(false);
       switchView('home');
       history.pushState({}, '', window.location.pathname);
+      saveState();
       toast('Đã rời phòng', 'info');
     });
 
@@ -756,6 +774,29 @@
     return !roomCode;
   }
 
+  /** Nhiều presence key có thể cùng quảng bá một roomId (reconnect, đổi host, phiên cũ chưa hết hạn). */
+  function dedupeLobbyRoomsByRoomId(entries) {
+    const map = new Map();
+    for (const raw of entries) {
+      if (!raw || !raw.roomId) continue;
+      const id = String(raw.roomId).trim().toUpperCase();
+      const prev = map.get(id);
+      if (!prev) {
+        map.set(id, { ...raw, roomId: id });
+        continue;
+      }
+      map.set(id, {
+        ...prev,
+        ...raw,
+        roomId: id,
+        usersCount: Math.max(Number(prev.usersCount) || 0, Number(raw.usersCount) || 0),
+      });
+    }
+    return Array.from(map.values()).sort((a, b) =>
+      String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' })
+    );
+  }
+
   function setupGlobalLobby() {
     globalLobbyChannel = supabase.channel('global_lobby');
     globalLobbyChannel
@@ -767,6 +808,7 @@
             activePublicRooms.push(presences[0]);
           }
         }
+        activePublicRooms = dedupeLobbyRoomsByRoomId(activePublicRooms);
         renderLobbyRooms();
       })
       .subscribe(async (status) => {
@@ -1346,8 +1388,11 @@
           <div class="queue-item-artist">${esc(song.author)}</div>
         </div>
         ${canManageRoomQueue ? `
-          <div class="queue-item-actions" style="margin-left:auto; display:flex; gap:5px;">
-            <button class="btn-icon q-room-remove" data-index="${i}" title="Xóa">
+          <div class="queue-item-actions" style="margin-left:auto; display:flex; gap:5px; align-items:center;">
+            <button type="button" class="btn-icon q-room-play" data-index="${i}" title="Phát bài này" draggable="false">
+              <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+            </button>
+            <button type="button" class="btn-icon q-room-remove" data-index="${i}" title="Xóa" draggable="false">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
             </button>
           </div>
@@ -1356,6 +1401,19 @@
     `).join('');
 
     container.onclick = (e) => {
+      const playRoomBtn = e.target.closest('.q-room-play');
+      if (playRoomBtn) {
+        if (!isRoomHost) {
+          toast('Chỉ Host mới điều khiển phát trong phòng', 'info');
+          return;
+        }
+        e.stopPropagation();
+        const idx = parseInt(playRoomBtn.dataset.index, 10);
+        const song = state.roomQueue[idx];
+        if (song) playSong(song, false);
+        return;
+      }
+
       const removeBtn = e.target.closest('.q-room-remove');
       if (removeBtn) {
         if (!isRoomHost) {
@@ -1813,7 +1871,11 @@
     endStallNudgeCount = 0;
     updateUI(song);
     showBar(true);
-    switchView('nowplaying');
+    if (roomCode && isRoomHost) {
+      switchView('room');
+    } else {
+      switchView('nowplaying');
+    }
 
     try {
       audio.src = `/api/stream/${encodeURIComponent(song.videoId)}`;
@@ -2096,7 +2158,21 @@
 
     let toggleInFlight = false;
     const toggle = () => {
-      if (!audio.src) return;
+      if (!audio.src) {
+        if (roomCode && isRoomHost && state.roomQueue.length > 0) {
+          const idx = state.currentIndex >= 0 ? state.currentIndex : 0;
+          const song = state.roomQueue[idx] || state.roomQueue[0];
+          if (song) playSong(song, false);
+          return;
+        }
+        if (!roomCode && state.queue.length > 0) {
+          const idx = state.currentIndex >= 0 ? state.currentIndex : 0;
+          const song = state.queue[idx] || state.queue[0];
+          if (song) playSong(song, false);
+          return;
+        }
+        return;
+      }
       if (toggleInFlight) return;
       const actuallyPlaying = !audio.paused && !audio.ended;
       if (actuallyPlaying) {

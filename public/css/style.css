@@ -1461,9 +1461,20 @@ img    { display: block; max-width: 100%; }
   background: white;
   color: var(--bg-deep) !important;
   transition: all 0.2s var(--spring);
+  line-height: 0;
 }
 .pb-play:hover { transform: scale(1.06); }
-.pb-play svg { width: 14px; height: 14px; }
+.pb-play svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+/* Tam giác Play lệch trái trong viewBox — căn quang học trong nút tròn (NP dùng nút lớn hơn nên ít lộ) */
+.pb-play svg polygon {
+  transform: translateX(1.5px);
+  transform-origin: center;
+}
 
 .pb-right { flex: 1; display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .pb-time { font-size: 11px; color: var(--text-tertiary); font-variant-numeric: tabular-nums; }

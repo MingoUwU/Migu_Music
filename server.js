@@ -937,7 +937,7 @@ app.post('/api/recommend', async (req, res) => {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '2.2.2',
+    version: '2.2.3',
     ytDlp: !!ytDlpPath,
     ytDlpPath: ytDlpPath ? 'Found' : 'Missing',
     uptime: process.uptime(),
