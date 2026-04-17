@@ -3210,7 +3210,11 @@
         p_author: String(song.author || '').slice(0, 300),
       });
       if (error) console.warn('[MiGu] increment_song_play:', error.message);
-      else if (state.currentView === 'home') loadCommunityChart({ preferCache: true });
+      else {
+        // DB đã tăng play_count -> bỏ cache cũ để tránh "đếm không lên" trên Home.
+        homeCommunityCache = null;
+        if (state.currentView === 'home') loadCommunityChart({ force: true });
+      }
     } catch (e) {
       console.warn('[MiGu] reportPlayComplete', e);
     }
