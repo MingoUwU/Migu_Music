@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════
-  MiGu Music Player v2.2.4
+  MiGu Music Player v2.2.5
    ═══════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -33,6 +33,8 @@
     lastRecommendationVideos: [],
     /** Tab gợi ý NP: mixed | type | related */
     activeSuggestTab: 'mixed',
+    /** Các video user đã ẩn khỏi gợi ý */
+    dismissedSuggestionIds: [],
     backgroundSaver: false,
   };
 
@@ -141,6 +143,7 @@
   const MAX_FAVORITES_ITEMS = 500;
   const MAX_PLAYLIST_ITEMS = 300;
   const MAX_RECOMMENDATION_ITEMS = 20;
+  const MAX_DISMISSED_SUGGESTIONS = 400;
   const MAX_COMMUNITY_CHART_ITEMS = 20;
   const SUPER_QUEUE_RENDER_LIMIT = 60;
   const SUPER_ROOM_QUEUE_RENDER_LIMIT = 40;
@@ -214,6 +217,10 @@
 
     state.lastRecommendationVideos = (Array.isArray(state.lastRecommendationVideos) ? state.lastRecommendationVideos : [])
       .slice(0, MAX_RECOMMENDATION_ITEMS);
+    state.dismissedSuggestionIds = (Array.isArray(state.dismissedSuggestionIds) ? state.dismissedSuggestionIds : [])
+      .map((x) => String(x || '').trim())
+      .filter(Boolean)
+      .slice(-MAX_DISMISSED_SUGGESTIONS);
     state.communityChartSongs = (Array.isArray(state.communityChartSongs) ? state.communityChartSongs : [])
       .slice(0, MAX_COMMUNITY_CHART_ITEMS);
   }
@@ -529,6 +536,7 @@
         state.shuffle = d.shuffle || false;
         state.listeningHistory = Array.isArray(d.listeningHistory) ? d.listeningHistory.slice(-120) : [];
         state.superSaverMode = !!d.superSaverMode;
+        state.dismissedSuggestionIds = Array.isArray(d.dismissedSuggestionIds) ? d.dismissedSuggestionIds : [];
         enforceStateLimits();
         if (state.currentIndex >= state.queue.length) {
           state.currentIndex = state.queue.length ? state.queue.length - 1 : -1;
@@ -577,6 +585,7 @@
         shuffle: state.shuffle,
         listeningHistory: state.listeningHistory.slice(-120),
         superSaverMode: state.superSaverMode,
+        dismissedSuggestionIds: state.dismissedSuggestionIds.slice(-MAX_DISMISSED_SUGGESTIONS),
       }));
     } catch (e) { /* silent */ }
   }
@@ -3038,7 +3047,9 @@
       const tab = encodeURIComponent(state.activeSuggestTab || 'mixed');
       const res = await fetch(`/api/info/${encodeURIComponent(videoId)}?suggest=${tab}`);
       const data = await res.json();
-      const recs = data.recommendedVideos || [];
+      const blocked = new Set((state.dismissedSuggestionIds || []).map((x) => String(x)));
+      const recs = (Array.isArray(data.recommendedVideos) ? data.recommendedVideos : [])
+        .filter((v) => v && v.videoId && v.videoId !== videoId && !blocked.has(String(v.videoId)));
       state.lastRecommendationVideos = recs;
 
       if (hintEl) {
@@ -3047,7 +3058,10 @@
           hintEl.hidden = true;
           hintEl.textContent = '';
         } else {
-          hintEl.textContent = `Nhận diện thể loại: ${meta.typeLabel}`;
+          const countryLabel = String(meta?.countryLabel || '').trim();
+          hintEl.textContent = countryLabel
+            ? `Nhận diện: ${meta.typeLabel} • ${countryLabel}`
+            : `Nhận diện: ${meta.typeLabel}`;
           hintEl.hidden = false;
         }
       }
@@ -3074,6 +3088,9 @@
             <button class="suggest-action-btn add" title="Thêm vào hàng chờ" data-action="add">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             </button>
+            <button class="suggest-action-btn remove" title="Ẩn gợi ý này" data-action="remove">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
           </div>
         </div>`;
       }).join('');
@@ -3088,6 +3105,24 @@
         };
         item.querySelector('[data-action="play"]')?.addEventListener('click', (e) => { e.stopPropagation(); playSong(song); });
         item.querySelector('[data-action="add"]')?.addEventListener('click', (e) => { e.stopPropagation(); addToQueue(song); toast('Đã thêm vào hàng chờ', 'success'); });
+        item.querySelector('[data-action="remove"]')?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const vid = String(song.videoId || '');
+          if (!vid) return;
+          if (!state.dismissedSuggestionIds.includes(vid)) {
+            state.dismissedSuggestionIds.push(vid);
+            if (state.dismissedSuggestionIds.length > MAX_DISMISSED_SUGGESTIONS) {
+              state.dismissedSuggestionIds = state.dismissedSuggestionIds.slice(-MAX_DISMISSED_SUGGESTIONS);
+            }
+          }
+          state.lastRecommendationVideos = (state.lastRecommendationVideos || []).filter((x) => x && x.videoId !== vid);
+          item.remove();
+          if (!container.querySelector('.suggest-item')) {
+            container.innerHTML = '<div class="empty-state small"><p>Không còn gợi ý nào (bạn đã ẩn hết)</p></div>';
+          }
+          saveState();
+          toast('Đã ẩn bài khỏi gợi ý', 'info');
+        });
         item.addEventListener('click', () => playSong(song));
       });
     } catch (err) {

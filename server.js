@@ -283,6 +283,21 @@ function stripTitleNoise(title) {
   return cut || String(title).trim();
 }
 
+function buildSongContextQueries(title, author) {
+  const coreTitle = stripTitleNoise(title).replace(/\s+/g, ' ').trim();
+  const cleanAuthor = String(author || '').replace(/\s+/g, ' ').trim();
+  const queries = [];
+  if (cleanAuthor && coreTitle) {
+    queries.push(`${cleanAuthor} ${coreTitle}`);
+    queries.push(`${cleanAuthor} nhạc hay`);
+  }
+  if (coreTitle) {
+    queries.push(`${coreTitle} official mv`);
+    queries.push(`${coreTitle} lyrics`);
+  }
+  return queries.filter(Boolean);
+}
+
 function titleCoreWordSet(title) {
   const core = stripTitleNoise(title)
     .toLowerCase()
@@ -322,6 +337,29 @@ function detectSuggestionType(title, author) {
   return { key: 'vpop', label: 'V-Pop' };
 }
 
+function detectSuggestionCountry(title, author) {
+  const raw = `${title || ''} ${author || ''}`;
+  const text = raw.toLowerCase();
+
+  // Script-based signals first.
+  if (/[\uac00-\ud7af]/u.test(raw)) return { key: 'kr', label: 'Hàn Quốc' };
+  if (/[\u3040-\u30ff]/u.test(raw)) return { key: 'jp', label: 'Nhật Bản' };
+  if (/[\u4e00-\u9fff]/u.test(raw)) return { key: 'cn', label: 'Trung Quốc' };
+
+  const rules = [
+    { key: 'vn', label: 'Việt Nam', patterns: [/\bv-?pop\b/i, /việt nam/i, /nhạc việt/i, /sơn tùng|đen vâu|amee|hoàng dũng|tlinh/i] },
+    { key: 'kr', label: 'Hàn Quốc', patterns: [/\bk-?pop\b/i, /korea|korean/i, /bts|blackpink|newjeans|ive|aespa|seventeen/i] },
+    { key: 'jp', label: 'Nhật Bản', patterns: [/\bj-?pop\b/i, /japan|japanese/i, /yoasobi|ado|kenshi|radwimps/i] },
+    { key: 'cn', label: 'Trung Quốc', patterns: [/\bc-?pop\b/i, /china|chinese/i] },
+    { key: 'th', label: 'Thái Lan', patterns: [/\bt-?pop\b/i, /thai|thailand/i] },
+    { key: 'usuk', label: 'US-UK', patterns: [/\b(us-uk|usuk|english|international)\b/i, /ed sheeran|taylor swift|the weeknd|dua lipa|billie eilish/i] },
+  ];
+  for (const r of rules) {
+    if (r.patterns.some((p) => p.test(text))) return { key: r.key, label: r.label };
+  }
+  return { key: 'vn', label: 'Việt Nam' };
+}
+
 const TYPE_SEARCH_POOL = {
   remix: ['nhạc remix việt nam hot trend 2025', 'remix tiktok việt nam mới nhất'],
   lofi: ['lofi việt nam chill không lời', 'lofi study việt nam'],
@@ -331,6 +369,68 @@ const TYPE_SEARCH_POOL = {
   rap: ['rap việt hay nhất 2025', 'nhạc trap việt nam mới'],
   ballad: ['nhạc ballad việt nam buồn hay', 'ballad việt nam tâm trạng'],
   vpop: ['vpop mv mới nhất 2025', 'nhạc việt hot trend tháng này'],
+};
+
+const COUNTRY_DISCOVERY_POOL = {
+  vn: ['nhạc việt hot trend tháng này', 'vpop mới nhất 2025'],
+  kr: ['kpop new releases 2025', 'korean music chart top songs'],
+  jp: ['jpop new songs 2025', 'japanese music chart hits'],
+  cn: ['cpop new songs 2025', 'chinese music chart hits'],
+  th: ['thai pop new songs 2025', 'tpop hit songs'],
+  usuk: ['pop hits 2025 official mv', 'top us uk songs 2025'],
+};
+
+const TYPE_SEARCH_POOL_BY_COUNTRY = {
+  kr: {
+    remix: ['kpop remix tiktok', 'korean remix hits'],
+    lofi: ['kpop lofi playlist', 'korean lofi beats'],
+    chill: ['korean chill songs', 'kpop chill playlist'],
+    cover: ['kpop acoustic cover', 'korean cover live'],
+    karaoke: ['kpop karaoke with lyrics', 'korean karaoke hits'],
+    rap: ['korean rap trap 2025', 'khiphop hits'],
+    ballad: ['korean ballad songs', 'kdrama ost ballad'],
+    vpop: ['kpop new releases 2025', 'korean music chart top songs'],
+  },
+  jp: {
+    remix: ['jpop remix 2025', 'japanese remix songs'],
+    lofi: ['jpop lofi playlist', 'japanese lofi beats'],
+    chill: ['japanese chill songs', 'jpop chill mix'],
+    cover: ['jpop cover acoustic', 'japanese cover songs'],
+    karaoke: ['jpop karaoke lyrics', 'japanese karaoke hits'],
+    rap: ['japanese rap songs 2025', 'j-rap hiphop'],
+    ballad: ['jpop ballad songs', 'japanese sad songs'],
+    vpop: ['jpop new songs 2025', 'japanese music chart hits'],
+  },
+  cn: {
+    remix: ['cpop remix songs', 'chinese remix hits'],
+    lofi: ['chinese lofi playlist', 'cpop lofi mix'],
+    chill: ['cpop chill songs', 'chinese chill playlist'],
+    cover: ['chinese cover songs', 'cpop acoustic cover'],
+    karaoke: ['chinese karaoke hits', 'cpop karaoke lyrics'],
+    rap: ['chinese rap songs 2025', 'cpop rap trap'],
+    ballad: ['chinese ballad songs', 'cpop sad songs'],
+    vpop: ['cpop new songs 2025', 'chinese music chart hits'],
+  },
+  th: {
+    remix: ['thai remix songs', 'tpop remix'],
+    lofi: ['thai lofi playlist', 'tpop lofi'],
+    chill: ['thai chill songs', 'tpop chill playlist'],
+    cover: ['thai acoustic cover songs', 'tpop cover live'],
+    karaoke: ['thai karaoke hits', 'tpop karaoke lyrics'],
+    rap: ['thai rap songs 2025', 'thai hiphop hits'],
+    ballad: ['thai ballad songs', 'tpop sad songs'],
+    vpop: ['thai pop new songs 2025', 'tpop hit songs'],
+  },
+  usuk: {
+    remix: ['english remix hits 2025', 'pop remix tiktok'],
+    lofi: ['english lofi songs', 'pop lofi playlist'],
+    chill: ['english chill songs 2025', 'indie pop chill playlist'],
+    cover: ['acoustic cover english songs', 'live cover pop songs'],
+    karaoke: ['english karaoke hits', 'karaoke pop songs lyrics'],
+    rap: ['us uk rap hits 2025', 'hiphop trap playlist'],
+    ballad: ['english ballad songs', 'pop sad songs playlist'],
+    vpop: ['top us uk songs 2025', 'pop hits 2025 official mv'],
+  },
 };
 
 async function youtubeSearchSafe(query) {
@@ -350,7 +450,9 @@ async function fetchRecommendationsForVideo(videoId, info, tab) {
   const title = info.title || '';
   const author = info.author || '';
   const detected = detectSuggestionType(title, author);
-  const pools = TYPE_SEARCH_POOL[detected.key] || TYPE_SEARCH_POOL.vpop;
+  const country = detectSuggestionCountry(title, author);
+  const countryPoolPack = TYPE_SEARCH_POOL_BY_COUNTRY[country.key] || TYPE_SEARCH_POOL;
+  const pools = countryPoolPack[detected.key] || countryPoolPack.vpop || TYPE_SEARCH_POOL[detected.key] || TYPE_SEARCH_POOL.vpop;
 
   let raw = [];
 
@@ -362,12 +464,16 @@ async function fetchRecommendationsForVideo(videoId, info, tab) {
       raw.push(...r);
     }
   } else {
-    // mixed: thể loại + khám phá V-Pop (đa dạng, không dán title bài hiện tại)
-    for (const q of pools.slice(0, 2)) {
+    // mixed: giữ đa dạng theo thể loại, nhưng vẫn bám ngữ cảnh bài hiện tại.
+    const contextQueries = buildSongContextQueries(title, author);
+    const mixedQueries = [...pools.slice(0, 1), ...contextQueries.slice(0, 3)];
+    const countryPool = COUNTRY_DISCOVERY_POOL[country.key] || COUNTRY_DISCOVERY_POOL.vn;
+    mixedQueries.push(countryPool[Math.floor(Math.random() * countryPool.length)]);
+    for (const q of mixedQueries) {
       const r = await youtubeSearchSafe(q);
       raw.push(...r);
     }
-    const extraPool = TYPE_SEARCH_POOL.vpop;
+    const extraPool = COUNTRY_DISCOVERY_POOL[country.key] || COUNTRY_DISCOVERY_POOL.vn;
     const qExtra = extraPool[Math.floor(Math.random() * extraPool.length)];
     raw.push(...(await youtubeSearchSafe(qExtra)));
   }
@@ -381,11 +487,27 @@ async function fetchRecommendationsForVideo(videoId, info, tab) {
     out.push(v);
   }
 
-  out.sort((a, b) => (Number(b.viewCount) || 0) - (Number(a.viewCount) || 0));
-  const videos = out.slice(0, 14);
+  // related/type ưu tiên view cao; mixed ưu tiên đa dạng nghệ sĩ để tránh lặp list.
+  const sorted = [...out].sort((a, b) => (Number(b.viewCount) || 0) - (Number(a.viewCount) || 0));
+  let videos = sorted.slice(0, 14);
+  if (tab === 'mixed') {
+    videos = [];
+    const byAuthor = new Map();
+    for (const v of sorted) {
+      const key = String(v.author || '').trim().toLowerCase() || '__unknown__';
+      const count = byAuthor.get(key) || 0;
+      if (count >= 2) continue;
+      byAuthor.set(key, count + 1);
+      videos.push(v);
+      if (videos.length >= 14) break;
+    }
+    // Fallback khi lọc nghệ sĩ quá chặt.
+    if (videos.length < 8) videos = sorted.slice(0, 14);
+    else videos = videos.slice(0, 14);
+  }
   return {
     videos,
-    suggestMeta: { tab, typeKey: detected.key, typeLabel: detected.label },
+    suggestMeta: { tab, typeKey: detected.key, typeLabel: detected.label, countryKey: country.key, countryLabel: country.label },
   };
 }
 
@@ -618,7 +740,7 @@ app.get('/api/info/:id', async (req, res) => {
     const info = await getVideoInfoCachedForUi(id);
 
     let recommended = [];
-    let suggestMeta = { tab: suggestTab, typeKey: 'vpop', typeLabel: 'V-Pop' };
+    let suggestMeta = { tab: suggestTab, typeKey: 'vpop', typeLabel: 'V-Pop', countryKey: 'vn', countryLabel: 'Việt Nam' };
     try {
       const pack = await fetchRecommendationsForVideo(id, info, suggestTab);
       recommended = pack.videos;
