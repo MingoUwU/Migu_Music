@@ -1732,7 +1732,7 @@
       };
 
       item.querySelector('[data-action="play"]')?.addEventListener('click', (e) => { e.stopPropagation(); playSong(song); });
-      item.querySelector('[data-action="add"]')?.addEventListener('click', (e) => { e.stopPropagation(); addToQueue(song); toast('Đã thêm vào hàng chờ', 'success'); });
+      item.querySelector('[data-action="add"]')?.addEventListener('click', (e) => { e.stopPropagation(); addToQueue(song); });
       item.querySelector('[data-action="fav"]')?.addEventListener('click', (e) => {
         e.stopPropagation(); toggleFav(song);
         e.currentTarget.classList.toggle('is-fav', state.favorites.some(f => f.videoId === id));
@@ -2796,7 +2796,6 @@
       row.querySelector('[data-action="add"]')?.addEventListener('click', (e) => {
         e.stopPropagation();
         addToQueue(song);
-        toast('Đã thêm vào hàng chờ', 'success');
       });
       row.querySelector('[data-action="remove"]')?.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -3104,7 +3103,7 @@
           duration: 0,
         };
         item.querySelector('[data-action="play"]')?.addEventListener('click', (e) => { e.stopPropagation(); playSong(song); });
-        item.querySelector('[data-action="add"]')?.addEventListener('click', (e) => { e.stopPropagation(); addToQueue(song); toast('Đã thêm vào hàng chờ', 'success'); });
+        item.querySelector('[data-action="add"]')?.addEventListener('click', (e) => { e.stopPropagation(); addToQueue(song); });
         item.querySelector('[data-action="remove"]')?.addEventListener('click', (e) => {
           e.stopPropagation();
           const vid = String(song.videoId || '');
