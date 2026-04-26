@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MiGu Music v2.0.7</title>
+  <title>MiGu Music v2.2.6</title>
   <link rel="icon" type="image/png" href="/logo.png">
   <link rel="stylesheet" href="css/style.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -26,7 +26,7 @@
         <img src="/logo.png" alt="MiGu" class="logo-icon">
         <span class="logo"><span class="logo-m">M</span><span class="logo-i">i</span><span class="logo-g">G</span><span
             class="logo-u">u</span></span>
-        <span class="logo-version">v2.0.7</span>
+        <span class="logo-version">v2.2.6</span>
       </div>
 
       <nav class="sidebar-nav">
@@ -92,15 +92,40 @@
       </div>
 
       <div class="perf-mode-wrap">
-        <button class="perf-mode-btn" id="btn-mix-mode" title="Bật/tắt mix chuyển bài">
-          🎚 Mix chuyển bài: OFF
-        </button>
-        <button class="perf-mode-btn" id="btn-super-mode" title="Bật/tắt chế độ siêu tiết kiệm">
-          ⚡ Super tiết kiệm: OFF
+        <button type="button" class="perf-mode-card perf-mode-card--super" id="btn-super-mode" title="Giảm hiệu ứng & gợi ý để nhẹ máy">
+          <span class="perf-mode-shimmer perf-mode-shimmer--volt" aria-hidden="true"></span>
+          <span class="perf-mode-emoji" aria-hidden="true">⚡</span>
+          <div class="perf-mode-copy">
+            <span class="perf-mode-title">Super tiết kiệm</span>
+            <span class="perf-mode-meta" data-super-meta>—</span>
+          </div>
+          <span class="perf-switch perf-switch--super" aria-hidden="true"><span class="perf-switch__knob"></span></span>
         </button>
       </div>
 
-      <div class="sidebar-footer">Made by Trung Nam</div>
+      <div class="perf-mode-wrap">
+        <button type="button" class="playlist-item" id="btn-shortcuts-help" title="Xem phím tắt">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="5" width="18" height="14" rx="2"></rect>
+            <path d="M7 9h2M11 9h2M15 9h2M7 13h10"></path>
+          </svg>
+          <span>Phím tắt</span>
+          <span class="playlist-count">?</span>
+        </button>
+      </div>
+
+      <div class="perf-mode-wrap">
+        <button type="button" class="playlist-item theme-toggle-btn" id="btn-theme-toggle" title="Đổi giao diện sáng/tối">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="4"></circle>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path>
+          </svg>
+          <span data-theme-label>Normal mode</span>
+          <span class="playlist-count" data-theme-icon>◐</span>
+        </button>
+      </div>
+
+      <div class="sidebar-footer"><span class="sidebar-footer-glow">Made by Trung Nam</span></div>
     </aside>
 
     <!-- ─── Main ─────────────────────────────────────────── -->
@@ -137,9 +162,29 @@
         <div class="section-header">
           <h3>🔥 Thịnh hành</h3>
         </div>
+        <div class="trending-tabs" id="trending-tabs" role="tablist" aria-label="Lọc thịnh hành">
+          <button type="button" class="trending-tab active" role="tab" data-category="all" aria-selected="true">Tất cả</button>
+          <button type="button" class="trending-tab" role="tab" data-category="chill" aria-selected="false">Chill</button>
+          <button type="button" class="trending-tab" role="tab" data-category="lofi" aria-selected="false">Lofi</button>
+          <button type="button" class="trending-tab" role="tab" data-category="remix" aria-selected="false">Remix</button>
+          <button type="button" class="trending-tab" role="tab" data-category="mv" aria-selected="false">MV mới</button>
+        </div>
         <div class="trending-grid" id="trending-container">
           <div class="loading-spinner" style="grid-column: 1 / -1; padding: 80px 0;">
             <div class="spinner"></div>
+          </div>
+        </div>
+
+        <div class="section-header section-header--split" style="margin-top: 24px;">
+          <div>
+            <h3>🏆 Top nghe nhiều</h3>
+            <p class="section-header-hint">Bảng cộng đồng</p>
+          </div>
+          <button type="button" class="btn-text section-header-action" id="btn-play-community-chart" style="display: none;">▶ Phát top</button>
+        </div>
+        <div class="trending-grid" id="community-chart-container">
+          <div class="empty-state small" style="grid-column: 1 / -1;">
+            <p>Đang tải bảng xếp hạng…</p>
           </div>
         </div>
 
@@ -274,7 +319,9 @@
                   <p style="margin-top:5px; color:var(--text-secondary);">Thành viên đang On: <span id="r-users-count"
                       style="font-weight:bold;color:white;">1</span></p>
                 </div>
-                <div style="display:flex; gap:10px;">
+                <div style="display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end;">
+                  <button type="button" class="btn-text" id="btn-copy-room-code"
+                    style="border:1px solid var(--border); padding:8px 12px;" title="Sao chép mã phòng">Sao chép mã</button>
                   <button class="btn-text" id="btn-copy-room-link"
                     style="border:1px solid var(--border); padding:8px 12px;"> Copy Link </button>
                   <button class="btn-text" id="btn-leave-room"
@@ -338,8 +385,11 @@
               style="flex:1; background:var(--glass); border-radius:var(--r-md); display:flex; flex-direction:column; overflow:hidden;">
               <div class="room-queue-card"
                 style="flex:1; background:var(--glass); border-radius:var(--r-md); padding:20px; overflow-y:auto; display:flex; flex-direction:column;">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:15px;">
+                  <div>
                   <h3 style="margin:0;">Hàng chờ phòng</h3>
+                  <p id="room-queue-hint" class="room-queue-hint" style="margin:6px 0 0;font-size:12px;color:var(--text-secondary);line-height:1.45;max-width:min(100%,420px);">Host: bấm nút Phát (▶) phía trên hoặc ▶ cạnh bài để bắt đầu phát.</p>
+                  </div>
                   <div style="display:flex; gap:10px;">
                     <button class="btn-text" id="btn-room-go-search"
                       style="font-size:13px; padding:6px 12px; background:rgba(255,255,255,0.1); border-radius:20px;"><i
@@ -556,7 +606,7 @@
             </div>
           </div>
 
-          <!-- Queue / Suggest panel -->
+          <!-- Cá nhân (trên) + Gợi ý (dưới) -->
           <div class="np-right">
             <div class="np-queue-panel">
               <div class="queue-header-tabs">
@@ -571,23 +621,31 @@
               </div>
             </div>
 
-            <div class="np-suggest-panel">
-              <div class="suggest-header">
-                <h3>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <div class="np-panel-splitter" id="np-panel-splitter" role="separator" aria-orientation="horizontal" aria-label="Kéo chỉnh chiều cao hàng chờ và gợi ý"></div>
+
+            <aside class="np-suggest-panel">
+              <div class="suggest-toolbar">
+                <h3 class="suggest-toolbar-title">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                     <path d="M9 18V5l12-2v13" />
                     <circle cx="6" cy="18" r="3" />
                     <circle cx="18" cy="16" r="3" />
                   </svg>
                   Gợi ý
                 </h3>
+                <div class="suggest-segment" id="suggest-tabs" role="tablist" aria-label="Kiểu gợi ý">
+                  <button type="button" class="suggest-tab active" role="tab" data-suggest-tab="mixed" title="Nhiều bài khác nhau" aria-selected="true">Đa dạng</button>
+                  <button type="button" class="suggest-tab" role="tab" data-suggest-tab="type" title="Cùng thể loại (remix, chill…)" aria-selected="false">Thể loại</button>
+                  <button type="button" class="suggest-tab" role="tab" data-suggest-tab="related" title="Cùng tên / bản khác" aria-selected="false">Cùng bài</button>
+                </div>
               </div>
+              <p class="suggest-type-hint" id="suggest-type-hint" hidden></p>
               <div class="suggest-list" id="suggest-container">
                 <div class="empty-state small">
                   <p>Phát bài hát để nhận gợi ý</p>
                 </div>
               </div>
-            </div>
+            </aside>
           </div>
         </div>
       </section>

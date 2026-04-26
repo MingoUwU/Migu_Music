@@ -276,6 +276,241 @@ async function youtubeSearch(query, retries = INNERTUBE_CLIENTS.length) {
   return results;
 }
 
+// ── Smart recommendations (type + diversity; tránh spam cùng một bài) ──
+function stripTitleNoise(title) {
+  if (!title) return '';
+  const cut = String(title).split(/[|｜/／—–-]{1,}/)[0].trim();
+  return cut || String(title).trim();
+}
+
+function buildSongContextQueries(title, author) {
+  const coreTitle = stripTitleNoise(title).replace(/\s+/g, ' ').trim();
+  const cleanAuthor = String(author || '').replace(/\s+/g, ' ').trim();
+  const queries = [];
+  if (cleanAuthor && coreTitle) {
+    queries.push(`${cleanAuthor} ${coreTitle}`);
+    queries.push(`${cleanAuthor} nhạc hay`);
+  }
+  if (coreTitle) {
+    queries.push(`${coreTitle} official mv`);
+    queries.push(`${coreTitle} lyrics`);
+  }
+  return queries.filter(Boolean);
+}
+
+function titleCoreWordSet(title) {
+  const core = stripTitleNoise(title)
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ');
+  return new Set(core.split(/\s+/).filter((w) => w.length > 2));
+}
+
+/** Bỏ các bài trùng “cùng ca khúc” khi đang tìm đa dạng */
+function titlesTooSimilar(candidateTitle, currentTitle) {
+  const aw = titleCoreWordSet(currentTitle);
+  const bw = Array.from(titleCoreWordSet(candidateTitle));
+  if (aw.size < 4) return false;
+  let hit = 0;
+  for (const w of bw) if (aw.has(w)) hit++;
+  const ratio = hit / aw.size;
+  if (ratio >= 0.42) return true;
+  const aNorm = stripTitleNoise(currentTitle).toLowerCase().replace(/\s+/g, '');
+  const bNorm = stripTitleNoise(candidateTitle).toLowerCase().replace(/\s+/g, '');
+  if (aNorm.length >= 14 && bNorm.includes(aNorm.slice(0, 14))) return true;
+  return false;
+}
+
+function detectSuggestionType(title, author) {
+  const text = `${title || ''} ${author || ''}`.toLowerCase();
+  const rules = [
+    { key: 'remix', label: 'Remix / Trend', patterns: [/\bremix\b/i, /mashup/i, /sped\s*up/i, /speed\s*up/i, /slowed/i, /reverb/i, /nightcore/i, /nhạc\s*remix/i, /\btiktok\b.*mix/i] },
+    { key: 'lofi', label: 'Lofi', patterns: [/lofi/i, /lo-fi/i, /lo\s*fi/i, /study\s*beat/i] },
+    { key: 'chill', label: 'Chill', patterns: [/\bchill\b/i, /thư\s*giãn/i, /\brelax\b/i] },
+    { key: 'cover', label: 'Cover', patterns: [/\bcover\b/i, /acoustic/i, /piano\s*ver/i, /unplugged/i, /bản\s*cover/i] },
+    { key: 'karaoke', label: 'Karaoke', patterns: [/karaoke/i, /beat\s*chu[aả]?\s*lời/i] },
+    { key: 'rap', label: 'Rap / Trap', patterns: [/\brap\b/i, /\btrap\b/i, /hip\s*hop/i, /drill/i, /\bvn\/?a\s*trap\b/i] },
+    { key: 'ballad', label: 'Ballad', patterns: [/ballad/i, /\bbuồn\b/i, /tâm\s*trạng/i, /sầu/i] },
+  ];
+  for (const r of rules) {
+    if (r.patterns.some((p) => p.test(text))) return { key: r.key, label: r.label };
+  }
+  return { key: 'vpop', label: 'V-Pop' };
+}
+
+function detectSuggestionCountry(title, author) {
+  const raw = `${title || ''} ${author || ''}`;
+  const text = raw.toLowerCase();
+
+  // Script-based signals first.
+  if (/[\uac00-\ud7af]/u.test(raw)) return { key: 'kr', label: 'Hàn Quốc' };
+  if (/[\u3040-\u30ff]/u.test(raw)) return { key: 'jp', label: 'Nhật Bản' };
+  if (/[\u4e00-\u9fff]/u.test(raw)) return { key: 'cn', label: 'Trung Quốc' };
+
+  const rules = [
+    { key: 'vn', label: 'Việt Nam', patterns: [/\bv-?pop\b/i, /việt nam/i, /nhạc việt/i, /sơn tùng|đen vâu|amee|hoàng dũng|tlinh/i] },
+    { key: 'kr', label: 'Hàn Quốc', patterns: [/\bk-?pop\b/i, /korea|korean/i, /bts|blackpink|newjeans|ive|aespa|seventeen/i] },
+    { key: 'jp', label: 'Nhật Bản', patterns: [/\bj-?pop\b/i, /japan|japanese/i, /yoasobi|ado|kenshi|radwimps/i] },
+    { key: 'cn', label: 'Trung Quốc', patterns: [/\bc-?pop\b/i, /china|chinese/i] },
+    { key: 'th', label: 'Thái Lan', patterns: [/\bt-?pop\b/i, /thai|thailand/i] },
+    { key: 'usuk', label: 'US-UK', patterns: [/\b(us-uk|usuk|english|international)\b/i, /ed sheeran|taylor swift|the weeknd|dua lipa|billie eilish/i] },
+  ];
+  for (const r of rules) {
+    if (r.patterns.some((p) => p.test(text))) return { key: r.key, label: r.label };
+  }
+  return { key: 'vn', label: 'Việt Nam' };
+}
+
+const TYPE_SEARCH_POOL = {
+  remix: ['nhạc remix việt nam hot trend 2025', 'remix tiktok việt nam mới nhất'],
+  lofi: ['lofi việt nam chill không lời', 'lofi study việt nam'],
+  chill: ['nhạc chill việt nam vibe hot', 'chill playlist việt nam 2025'],
+  cover: ['cover acoustic việt nam hay nhất', 'bản cover việt nam viral'],
+  karaoke: ['karaoke nhạc trẻ việt nam hot', 'karaoke hit việt nam'],
+  rap: ['rap việt hay nhất 2025', 'nhạc trap việt nam mới'],
+  ballad: ['nhạc ballad việt nam buồn hay', 'ballad việt nam tâm trạng'],
+  vpop: ['vpop mv mới nhất 2025', 'nhạc việt hot trend tháng này'],
+};
+
+const COUNTRY_DISCOVERY_POOL = {
+  vn: ['nhạc việt hot trend tháng này', 'vpop mới nhất 2025'],
+  kr: ['kpop new releases 2025', 'korean music chart top songs'],
+  jp: ['jpop new songs 2025', 'japanese music chart hits'],
+  cn: ['cpop new songs 2025', 'chinese music chart hits'],
+  th: ['thai pop new songs 2025', 'tpop hit songs'],
+  usuk: ['pop hits 2025 official mv', 'top us uk songs 2025'],
+};
+
+const TYPE_SEARCH_POOL_BY_COUNTRY = {
+  kr: {
+    remix: ['kpop remix tiktok', 'korean remix hits'],
+    lofi: ['kpop lofi playlist', 'korean lofi beats'],
+    chill: ['korean chill songs', 'kpop chill playlist'],
+    cover: ['kpop acoustic cover', 'korean cover live'],
+    karaoke: ['kpop karaoke with lyrics', 'korean karaoke hits'],
+    rap: ['korean rap trap 2025', 'khiphop hits'],
+    ballad: ['korean ballad songs', 'kdrama ost ballad'],
+    vpop: ['kpop new releases 2025', 'korean music chart top songs'],
+  },
+  jp: {
+    remix: ['jpop remix 2025', 'japanese remix songs'],
+    lofi: ['jpop lofi playlist', 'japanese lofi beats'],
+    chill: ['japanese chill songs', 'jpop chill mix'],
+    cover: ['jpop cover acoustic', 'japanese cover songs'],
+    karaoke: ['jpop karaoke lyrics', 'japanese karaoke hits'],
+    rap: ['japanese rap songs 2025', 'j-rap hiphop'],
+    ballad: ['jpop ballad songs', 'japanese sad songs'],
+    vpop: ['jpop new songs 2025', 'japanese music chart hits'],
+  },
+  cn: {
+    remix: ['cpop remix songs', 'chinese remix hits'],
+    lofi: ['chinese lofi playlist', 'cpop lofi mix'],
+    chill: ['cpop chill songs', 'chinese chill playlist'],
+    cover: ['chinese cover songs', 'cpop acoustic cover'],
+    karaoke: ['chinese karaoke hits', 'cpop karaoke lyrics'],
+    rap: ['chinese rap songs 2025', 'cpop rap trap'],
+    ballad: ['chinese ballad songs', 'cpop sad songs'],
+    vpop: ['cpop new songs 2025', 'chinese music chart hits'],
+  },
+  th: {
+    remix: ['thai remix songs', 'tpop remix'],
+    lofi: ['thai lofi playlist', 'tpop lofi'],
+    chill: ['thai chill songs', 'tpop chill playlist'],
+    cover: ['thai acoustic cover songs', 'tpop cover live'],
+    karaoke: ['thai karaoke hits', 'tpop karaoke lyrics'],
+    rap: ['thai rap songs 2025', 'thai hiphop hits'],
+    ballad: ['thai ballad songs', 'tpop sad songs'],
+    vpop: ['thai pop new songs 2025', 'tpop hit songs'],
+  },
+  usuk: {
+    remix: ['english remix hits 2025', 'pop remix tiktok'],
+    lofi: ['english lofi songs', 'pop lofi playlist'],
+    chill: ['english chill songs 2025', 'indie pop chill playlist'],
+    cover: ['acoustic cover english songs', 'live cover pop songs'],
+    karaoke: ['english karaoke hits', 'karaoke pop songs lyrics'],
+    rap: ['us uk rap hits 2025', 'hiphop trap playlist'],
+    ballad: ['english ballad songs', 'pop sad songs playlist'],
+    vpop: ['top us uk songs 2025', 'pop hits 2025 official mv'],
+  },
+};
+
+async function youtubeSearchSafe(query) {
+  try {
+    return await youtubeSearch(query);
+  } catch (e) {
+    log('[MiGu] recommend search fail: ' + query + ' — ' + e.message, 'WARN');
+    return [];
+  }
+}
+
+/**
+ * @param {'mixed'|'type'|'related'} tab
+ */
+async function fetchRecommendationsForVideo(videoId, info, tab) {
+  const id = String(videoId);
+  const title = info.title || '';
+  const author = info.author || '';
+  const detected = detectSuggestionType(title, author);
+  const country = detectSuggestionCountry(title, author);
+  const countryPoolPack = TYPE_SEARCH_POOL_BY_COUNTRY[country.key] || TYPE_SEARCH_POOL;
+  const pools = countryPoolPack[detected.key] || countryPoolPack.vpop || TYPE_SEARCH_POOL[detected.key] || TYPE_SEARCH_POOL.vpop;
+
+  let raw = [];
+
+  if (tab === 'related') {
+    raw = await youtubeSearchSafe(title);
+  } else if (tab === 'type') {
+    for (const q of pools.slice(0, 2)) {
+      const r = await youtubeSearchSafe(q);
+      raw.push(...r);
+    }
+  } else {
+    // mixed: giữ đa dạng theo thể loại, nhưng vẫn bám ngữ cảnh bài hiện tại.
+    const contextQueries = buildSongContextQueries(title, author);
+    const mixedQueries = [...pools.slice(0, 1), ...contextQueries.slice(0, 3)];
+    const countryPool = COUNTRY_DISCOVERY_POOL[country.key] || COUNTRY_DISCOVERY_POOL.vn;
+    mixedQueries.push(countryPool[Math.floor(Math.random() * countryPool.length)]);
+    for (const q of mixedQueries) {
+      const r = await youtubeSearchSafe(q);
+      raw.push(...r);
+    }
+    const extraPool = COUNTRY_DISCOVERY_POOL[country.key] || COUNTRY_DISCOVERY_POOL.vn;
+    const qExtra = extraPool[Math.floor(Math.random() * extraPool.length)];
+    raw.push(...(await youtubeSearchSafe(qExtra)));
+  }
+
+  const seen = new Set();
+  const out = [];
+  for (const v of raw) {
+    if (!v.videoId || v.videoId === id || seen.has(v.videoId)) continue;
+    seen.add(v.videoId);
+    if (tab !== 'related' && titlesTooSimilar(v.title, title)) continue;
+    out.push(v);
+  }
+
+  // related/type ưu tiên view cao; mixed ưu tiên đa dạng nghệ sĩ để tránh lặp list.
+  const sorted = [...out].sort((a, b) => (Number(b.viewCount) || 0) - (Number(a.viewCount) || 0));
+  let videos = sorted.slice(0, 14);
+  if (tab === 'mixed') {
+    videos = [];
+    const byAuthor = new Map();
+    for (const v of sorted) {
+      const key = String(v.author || '').trim().toLowerCase() || '__unknown__';
+      const count = byAuthor.get(key) || 0;
+      if (count >= 2) continue;
+      byAuthor.set(key, count + 1);
+      videos.push(v);
+      if (videos.length >= 14) break;
+    }
+    // Fallback khi lọc nghệ sĩ quá chặt.
+    if (videos.length < 8) videos = sorted.slice(0, 14);
+    else videos = videos.slice(0, 14);
+  }
+  return {
+    videos,
+    suggestMeta: { tab, typeKey: detected.key, typeLabel: detected.label, countryKey: country.key, countryLabel: country.label },
+  };
+}
+
 // ── YouTube Search Suggestions ───────────────────────────────────
 async function youtubeSuggestions(query) {
   const url = `https://suggestqueries-clients6.youtube.com/complete/search?client=youtube&q=${encodeURIComponent(query)}&ds=yt`;
@@ -386,10 +621,10 @@ async function getAudioUrl(videoId) {
   }
 
   const isDirectUrl = videoId.startsWith('http');
-  // Avoid m3u8 at all costs, prefer mp3/m4a direct streams
+  // Avoid m3u8 at all costs, prefer stable progressive audio streams
   const format = isDirectUrl
     ? 'bestaudio[ext=mp3]/bestaudio[ext=m4a]/bestaudio[protocol^=http][protocol!*=m3u8]/bestaudio'
-    : 'bestaudio[ext=webm][acodec=opus][abr>=160]/bestaudio[ext=webm][acodec=opus]/bestaudio[ext=webm]/bestaudio/best';
+    : 'bestaudio[ext=m4a]/bestaudio[protocol^=http][protocol!*=m3u8]/bestaudio[ext=webm][acodec=opus]/bestaudio[ext=webm]/bestaudio/best';
 
   log('[MiGu] Extracting for URL: ' + targetUrl);
 
@@ -428,10 +663,10 @@ async function getVideoInfo(videoId) {
   }
 
   const isDirectUrl = videoId.startsWith('http');
-  // Avoid m3u8 at all costs, prefer mp3/m4a direct streams
+  // Avoid m3u8 at all costs, prefer stable progressive audio streams
   const format = isDirectUrl
     ? 'bestaudio[ext=mp3]/bestaudio[ext=m4a]/bestaudio[protocol^=http][protocol!*=m3u8]/bestaudio'
-    : 'bestaudio[ext=webm][acodec=opus][abr>=160]/bestaudio[ext=webm][acodec=opus]/bestaudio[ext=webm]/bestaudio/best';
+    : 'bestaudio[ext=m4a]/bestaudio[protocol^=http][protocol!*=m3u8]/bestaudio[ext=webm][acodec=opus]/bestaudio[ext=webm]/bestaudio/best';
 
   log('[MiGu] Extracting metadata for: ' + targetUrl);
 
@@ -473,6 +708,16 @@ async function getVideoInfo(videoId) {
   };
 }
 
+/** Cache metadata khi user đổi tab gợi ý — tránh gọi yt-dlp lặp lại */
+const VIDEO_INFO_UI_CACHE = new Map();
+async function getVideoInfoCachedForUi(videoId) {
+  const row = VIDEO_INFO_UI_CACHE.get(videoId);
+  if (row && Date.now() - row.t < 6 * 60 * 1000) return row.info;
+  const info = await getVideoInfo(videoId);
+  VIDEO_INFO_UI_CACHE.set(videoId, { info, t: Date.now() });
+  return info;
+}
+
 // ── API: Search ──────────────────────────────────────────────────
 app.get('/api/search', async (req, res) => {
   try {
@@ -490,18 +735,22 @@ app.get('/api/search', async (req, res) => {
 app.get('/api/info/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const info = await getVideoInfo(id);
+    const rawTab = String(req.query.suggest || 'mixed').toLowerCase();
+    const suggestTab = ['mixed', 'type', 'related'].includes(rawTab) ? rawTab : 'mixed';
+    const info = await getVideoInfoCachedForUi(id);
 
-    // Also search for related videos using the title
     let recommended = [];
+    let suggestMeta = { tab: suggestTab, typeKey: 'vpop', typeLabel: 'V-Pop', countryKey: 'vn', countryLabel: 'Việt Nam' };
     try {
-      const related = await youtubeSearch(info.title);
-      recommended = related.filter(r => r.videoId !== id).slice(0, 8);
+      const pack = await fetchRecommendationsForVideo(id, info, suggestTab);
+      recommended = pack.videos;
+      suggestMeta = pack.suggestMeta;
     } catch (e) { /* silent */ }
 
     res.json({
       ...info,
-      recommendedVideos: recommended
+      recommendedVideos: recommended,
+      suggestMeta,
     });
   } catch (err) {
     log('[MiGu] Info error: ' + err.message, 'ERROR');
@@ -554,6 +803,18 @@ app.get('/api/playlist-info/:id', async (req, res) => {
   }
 });
 
+// ── API: Prefetch stream URL (warm memory cache — faster handoff to next track)
+app.get('/api/prefetch/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    await getAudioUrl(id);
+    res.status(204).end();
+  } catch (err) {
+    log('[MiGu] Prefetch error: ' + err.message, 'WARN');
+    res.status(204).end();
+  }
+});
+
 // ── API: Audio Stream Proxy ──────────────────────────────────────
 app.get('/api/stream/:id', async (req, res) => {
   try {
@@ -569,17 +830,32 @@ app.get('/api/stream/:id', async (req, res) => {
     log('[MiGu] Proxying remote stream: ' + audioInfo.url.substring(0, 100) + '...');
 
     // Proxy the audio stream
+    const streamUrl = String(audioInfo.url || '');
+    const isYouTubeStream =
+      streamUrl.includes('googlevideo.com') ||
+      streamUrl.includes('youtube.com') ||
+      streamUrl.includes('youtu.be');
+    const isSoundCloudStream = streamUrl.includes('soundcloud.com') || streamUrl.includes('sndcdn.com');
+
     const headers = {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       'Connection': 'keep-alive',
-      'Referer': 'https://soundcloud.com/',
-      'Origin': 'https://soundcloud.com'
+      'Accept': '*/*',
+      'Accept-Encoding': 'identity'
     };
-    if (req.headers.range) {
-      headers['Range'] = req.headers.range;
+    if (isYouTubeStream) {
+      headers['Referer'] = 'https://www.youtube.com/';
+      headers['Origin'] = 'https://www.youtube.com';
+    } else if (isSoundCloudStream) {
+      headers['Referer'] = 'https://soundcloud.com/';
+      headers['Origin'] = 'https://soundcloud.com';
     }
+    const requestedRange = String(req.headers.range || '');
+    if (requestedRange) headers['Range'] = requestedRange;
 
-    const audioRes = await fetch(audioInfo.url, { headers, timeout: 15000 });
+    // Do not use short fetch timeout for long music streams.
+    // A 15s timeout often aborts mid-track on unstable networks.
+    let audioRes = await fetch(audioInfo.url, { headers });
     const contentType = audioRes.headers.get('content-type') || '';
     const isHLS = contentType.includes('mpegurl') || audioInfo.url.includes('.m3u8');
 
@@ -609,13 +885,65 @@ app.get('/api/stream/:id', async (req, res) => {
       }
     }
 
-    audioRes.body.on('error', (err) => {
-      log('[MiGu] Stream Body Error: ' + err.message, 'ERROR');
+    let bytesForwarded = 0;
+    let reconnectAttempts = 0;
+    let streamClosed = false;
+    let reconnecting = false;
+
+    const parseRangeStart = (rangeHeader) => {
+      const m = /^bytes=(\d+)-/i.exec(String(rangeHeader || '').trim());
+      return m ? Number(m[1]) : 0;
+    };
+    const rangeStart = parseRangeStart(requestedRange);
+
+    const attachStream = (upstream, isReconnect = false) => {
+      if (!upstream || !upstream.body) return;
+      upstream.body.on('data', (chunk) => {
+        bytesForwarded += Buffer.byteLength(chunk);
+      });
+      upstream.body.on('error', async (err) => {
+        log('[MiGu] Stream Body Error: ' + err.message, 'ERROR');
+        if (streamClosed || res.writableEnded || reconnectAttempts >= 2) return;
+        reconnectAttempts++;
+        const resumeFrom = rangeStart + bytesForwarded;
+        const retryHeaders = { ...headers, Range: `bytes=${resumeFrom}-` };
+        log(`[MiGu] Reconnecting upstream stream from byte ${resumeFrom} (attempt ${reconnectAttempts})`, 'WARN');
+        reconnecting = true;
+        try {
+          const retryRes = await fetch(audioInfo.url, { headers: retryHeaders });
+          if (!retryRes.ok || !retryRes.body) {
+            log(`[MiGu] Reconnect failed with status ${retryRes.status}`, 'ERROR');
+            reconnecting = false;
+            return;
+          }
+          audioRes = retryRes;
+          reconnecting = false;
+          attachStream(retryRes, true);
+        } catch (reErr) {
+          reconnecting = false;
+          log('[MiGu] Reconnect stream error: ' + reErr.message, 'ERROR');
+        }
+      });
+      upstream.body.on('end', () => {
+        if (streamClosed || res.writableEnded) return;
+        setTimeout(() => {
+          if (!reconnecting && !res.writableEnded) res.end();
+        }, 120);
+      });
+      upstream.body.pipe(res, { end: false }).on('error', (err) => {
+        log('[MiGu] Response Pipe Error: ' + err.message, 'ERROR');
+      });
+      if (isReconnect) {
+        log('[MiGu] Upstream stream reattached successfully', 'WARN');
+      }
+    };
+
+    res.on('close', () => {
+      streamClosed = true;
+      try { if (audioRes?.body?.destroy) audioRes.body.destroy(); } catch (_) { /* ignore */ }
     });
 
-    audioRes.body.pipe(res).on('error', (err) => {
-      log('[MiGu] Response Pipe Error: ' + err.message, 'ERROR');
-    });
+    attachStream(audioRes);
   } catch (err) {
     log('[MiGu] Stream Proxy Error: ' + err.message, 'ERROR');
     if (!res.headersSent) {
@@ -637,17 +965,36 @@ app.get('/api/suggest', async (req, res) => {
 });
 
 // ── API: Trending Music ──────────────────────────────────────────
+/** Tab keys → search query pools (Innertube search, not official “Trending” charts). */
+const TRENDING_CATEGORY_QUERIES = {
+  chill: ['nhạc chill việt nam hot', 'chill playlist việt nam 2026'],
+  lofi: ['lofi việt nam study', 'lofi chill beats không lời'],
+  remix: ['nhạc remix việt nam hot trend', 'remix tiktok việt nam'],
+  mv: ['MV mới ra mắt việt nam', 'mv official việt nam mới'],
+};
+
 app.get('/api/trending', async (req, res) => {
   try {
-    // Use search-based approach for reliable trending content
-    const queries = [
-      'nhạc chill vietnam 2026',
-      'MV mới ra mắt',
-      'top hits vietnam'
-    ];
-    const query = queries[Math.floor(Math.random() * queries.length)];
+    const cat = String(req.query.category || 'all').toLowerCase().replace(/[^a-z0-9_-]/g, '');
+    let query;
+
+    if (cat === 'all' || cat === '') {
+      const queries = [
+        'nhạc chill vietnam 2026',
+        'MV mới ra mắt',
+        'top hits vietnam'
+      ];
+      query = queries[Math.floor(Math.random() * queries.length)];
+    } else {
+      const pool = TRENDING_CATEGORY_QUERIES[cat];
+      if (!pool) {
+        return res.status(400).json({ error: 'Unknown trending category.' });
+      }
+      query = pool[Math.floor(Math.random() * pool.length)];
+    }
+
     const results = await youtubeSearch(query);
-    res.json({ results: results.slice(0, 12) });
+    res.json({ results: results.slice(0, 12), category: cat || 'all' });
   } catch (err) {
     log('[MiGu] Trending error: ' + err.message, 'ERROR');
     res.status(500).json({ error: 'Failed to get trending.' });
@@ -712,7 +1059,7 @@ app.post('/api/recommend', async (req, res) => {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '2.0.0',
+    version: '2.2.4',
     ytDlp: !!ytDlpPath,
     ytDlpPath: ytDlpPath ? 'Found' : 'Missing',
     uptime: process.uptime(),

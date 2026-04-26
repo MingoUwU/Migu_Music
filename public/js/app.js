@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════
-   MiGu Music Player v2.0.7 — iOS 26 Liquid Glass Edition
+  MiGu Music Player v2.2.6
    ═══════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -26,8 +26,17 @@
     activeListenSession: null,
     lowPerformanceMode: false,
     superSaverMode: false,
-    mixTransitionSeconds: 0,
+    theme: 'normal',
     lastVisualizerFrameAt: 0,
+    trendingCategory: 'all',
+    communityChartSongs: [],
+    /** Gợi ý theo bài đang/ vừa phát — dùng autoplay khi hết hàng chờ */
+    lastRecommendationVideos: [],
+    /** Tab gợi ý NP: mixed | type | related */
+    activeSuggestTab: 'mixed',
+    /** Các video user đã ẩn khỏi gợi ý */
+    dismissedSuggestionIds: [],
+    backgroundSaver: false,
   };
 
   let socket = null;
@@ -35,7 +44,27 @@
   let isRoomHost = false;
   let isProcessingRoomSync = false;
   let syncHeartbeat = null;
+  /** Guest: chờ seek sau metadata — nội suy từ mốc host (syncAnchorAt / syncAudioTime). */
+  let pendingHostSyncSeek = null;
+  let lastHostEmitAt = 0;
   let myRoomJoinedAt = Date.now();
+
+  const ROOM_TICK_MS = 12000;
+  const ROOM_TICK_MS_SUPER = 20000;
+  const HOST_EMIT_DEBOUNCE_MS = 320;
+
+  /** Vị trí phát host tại “bây giờ” từ mốc thời gian — giảm phụ thuộc gói currentTime lặp lại. */
+  function getEffectiveHostPlaybackTime(u) {
+    if (!u) return 0;
+    const at = Number(u.syncAnchorAt);
+    const t0 = Number(u.syncAudioTime);
+    if (Number.isFinite(at) && Number.isFinite(t0)) {
+      if (u.isPlaying === false) return Math.max(0, t0);
+      return Math.max(0, t0 + (Date.now() - at) / 1000);
+    }
+    const ct = Number(u.currentTime);
+    return Number.isFinite(ct) ? Math.max(0, ct) : 0;
+  }
 
   const SUPABASE_URL = 'https://jhuqonoldshtxsquurho.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_ANl0zKdVePo8bAE_B8qKWA_bZOV5BvL';
@@ -55,6 +84,177 @@
   const $$ = (sel) => document.querySelectorAll(sel);
   const audio = $('#audio-player');
 
+  /** Next/prev/end-of-track navigation: host uses room queue, everyone else uses personal queue. */
+  function getActivePlaybackQueue() {
+    if (roomCode && isRoomHost) return state.roomQueue;
+    return state.queue;
+  }
+
+  /** Bài kế trong hàng chờ (thứ tự tuần tự, không shuffle) — dùng prefetch URL. */
+  function getNextSongAfterCurrent() {
+    const q = getActivePlaybackQueue();
+    if (!q.length || state.currentIndex < 0) return null;
+    if (state.shuffle) return null;
+    const i = state.currentIndex;
+    if (i < q.length - 1) return q[i + 1];
+    if (state.repeat === 'all' && q.length > 0) return q[0];
+    return null;
+  }
+
+  let nextStreamPrefetchVideoId = null;
+  let endStallNudgeCount = 0;
+
+  /** Gọi server warm cache yt-dlp cho bài kế — giảm đứng 5–10s khi chuyển bài. */
+  function tryPrefetchNextTrackUrl() {
+    const next = getNextSongAfterCurrent();
+    if (!next?.videoId) return;
+    if (nextStreamPrefetchVideoId === next.videoId) return;
+    nextStreamPrefetchVideoId = next.videoId;
+    fetch(`/api/prefetch/${encodeURIComponent(next.videoId)}`, { method: 'GET', cache: 'no-store' }).catch(() => { });
+  }
+
+  /** Hard seek only when very far off (rare); softer path uses playbackRate. */
+  let lastDriftCorrectionAt = 0;
+  let syncPlaybackRateResetTimer = null;
+
+  function resetGuestSyncPlaybackRate() {
+    if (syncPlaybackRateResetTimer) {
+      clearTimeout(syncPlaybackRateResetTimer);
+      syncPlaybackRateResetTimer = null;
+    }
+    try {
+      if (audio) audio.playbackRate = 1;
+    } catch (_) { /* ignore */ }
+  }
+
+  function scheduleGuestPlaybackRateReset(ms = 4500) {
+    if (syncPlaybackRateResetTimer) clearTimeout(syncPlaybackRateResetTimer);
+    syncPlaybackRateResetTimer = setTimeout(() => {
+      syncPlaybackRateResetTimer = null;
+      try {
+        if (audio) audio.playbackRate = 1;
+      } catch (_) { /* ignore */ }
+    }, ms);
+  }
+
+  let guestAutoplayUnlockHandler = null;
+  const HOME_SECTION_TTL_MS = 15 * 60 * 1000; // 15 minutes
+  const SAVE_STATE_DEBOUNCE_MS = 500;
+  const MAX_QUEUE_ITEMS = 200;
+  const MAX_FAVORITES_ITEMS = 500;
+  const MAX_PLAYLIST_ITEMS = 300;
+  const MAX_RECOMMENDATION_ITEMS = 20;
+  const MAX_DISMISSED_SUGGESTIONS = 400;
+  const MAX_COMMUNITY_CHART_ITEMS = 20;
+  const SUPER_QUEUE_RENDER_LIMIT = 60;
+  const SUPER_ROOM_QUEUE_RENDER_LIMIT = 40;
+  const SUPER_FAVORITES_RENDER_LIMIT = 80;
+  const SUPER_TRENDING_RENDER_LIMIT = 6;
+  const homeTrendingCache = new Map(); // key: category -> { rows, t }
+  const homeTrendingInFlight = new Map(); // key: category -> Promise
+  let homeCommunityCache = null; // { rows, t }
+  let homeCommunityInFlight = null;
+  let homePersonalizedCache = null; // { rows, t, sig }
+  let homePersonalizedInFlight = null;
+  let saveStateTimer = null;
+
+  function isFreshHomeCache(row) {
+    return !!(row && (Date.now() - Number(row.t || 0) < HOME_SECTION_TTL_MS));
+  }
+
+  function getHistorySignature() {
+    const hist = Array.isArray(state.listeningHistory) ? state.listeningHistory : [];
+    return hist.slice(-50).map(h => `${h.videoId || ''}:${Number(h.listenRatio || 0).toFixed(2)}:${h.liked ? 1 : 0}`).join('|');
+  }
+
+  function normalizeSongEntry(song) {
+    if (!song || !song.videoId) return null;
+    return {
+      videoId: String(song.videoId),
+      title: String(song.title || ''),
+      author: String(song.author || ''),
+      thumbnail: String(song.thumbnail || ''),
+      duration: Number(song.duration) || 0,
+    };
+  }
+
+  function getWindowedEntries(list, currentIndex, maxItems) {
+    const arr = Array.isArray(list) ? list : [];
+    if (!maxItems || arr.length <= maxItems) {
+      return arr.map((item, index) => ({ item, index }));
+    }
+
+    const safeCurrent = Number.isFinite(currentIndex) ? currentIndex : 0;
+    const half = Math.floor(maxItems / 2);
+    let start = Math.max(0, safeCurrent - half);
+    let end = start + maxItems;
+    if (end > arr.length) {
+      end = arr.length;
+      start = Math.max(0, end - maxItems);
+    }
+    return arr.slice(start, end).map((item, i) => ({ item, index: start + i }));
+  }
+
+  function enforceStateLimits() {
+    state.queue = (Array.isArray(state.queue) ? state.queue : [])
+      .map(normalizeSongEntry)
+      .filter(Boolean)
+      .slice(-MAX_QUEUE_ITEMS);
+
+    state.favorites = (Array.isArray(state.favorites) ? state.favorites : [])
+      .map(normalizeSongEntry)
+      .filter(Boolean)
+      .slice(0, MAX_FAVORITES_ITEMS);
+
+    const playlists = (state.playlists && typeof state.playlists === 'object') ? state.playlists : {};
+    const normalizedPlaylists = {};
+    Object.entries(playlists).forEach(([name, songs]) => {
+      normalizedPlaylists[name] = (Array.isArray(songs) ? songs : [])
+        .map(normalizeSongEntry)
+        .filter(Boolean)
+        .slice(0, MAX_PLAYLIST_ITEMS);
+    });
+    state.playlists = normalizedPlaylists;
+
+    state.lastRecommendationVideos = (Array.isArray(state.lastRecommendationVideos) ? state.lastRecommendationVideos : [])
+      .slice(0, MAX_RECOMMENDATION_ITEMS);
+    state.dismissedSuggestionIds = (Array.isArray(state.dismissedSuggestionIds) ? state.dismissedSuggestionIds : [])
+      .map((x) => String(x || '').trim())
+      .filter(Boolean)
+      .slice(-MAX_DISMISSED_SUGGESTIONS);
+    state.communityChartSongs = (Array.isArray(state.communityChartSongs) ? state.communityChartSongs : [])
+      .slice(0, MAX_COMMUNITY_CHART_ITEMS);
+  }
+  function clearGuestAutoplayUnlock() {
+    if (guestAutoplayUnlockHandler) {
+      document.removeEventListener('pointerdown', guestAutoplayUnlockHandler, true);
+      guestAutoplayUnlockHandler = null;
+    }
+  }
+
+  /**
+   * Autoplay bị chặn: không bắt bấm Play trên thanh điều khiển (guest đang bị disable).
+   * Lần chạm/chuột đầu tiên trên app sẽ gọi audio.play() để nối vào luồng host.
+   */
+  function scheduleGuestAutoplayUnlock() {
+    if (!roomCode || isRoomHost || guestAutoplayUnlockHandler) return;
+    guestAutoplayUnlockHandler = () => {
+      if (!roomCode || isRoomHost) {
+        clearGuestAutoplayUnlock();
+        return;
+      }
+      audio
+        .play()
+        .then(() => {
+          clearGuestAutoplayUnlock();
+          state.isPlaying = true;
+          updatePlayBtns(true);
+        })
+        .catch(() => {});
+    };
+    document.addEventListener('pointerdown', guestAutoplayUnlockHandler, { capture: true });
+  }
+
   const SVG = {
     play: '<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6 3 20 12 6 21 6 3"/></svg>',
     pause: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>',
@@ -63,16 +263,16 @@
   // ── Permissions ───────────────────────────────────────────────
   function applyHostPermissions() {
     const isGuest = roomCode && !isRoomHost;
+    const seekOk = canScrubTimeline();
 
-    // Disable interactions if guest (Only disable playback controls)
-    const targetSelectors = [
-      '#np-btn-play', '#np-btn-prev', '#np-btn-next', '#np-progress-bar',
+    const transportSelectors = [
+      '#np-btn-play', '#np-btn-prev', '#np-btn-next',
       '#np-btn-shuffle', '#np-btn-repeat',
-      '#pb-play', '#pb-prev', '#pb-next', '#pb-progress',
-      '#room-btn-play', '#room-btn-prev', '#room-btn-next'
+      '#pb-play', '#pb-prev', '#pb-next',
+      '#room-btn-play', '#room-btn-prev', '#room-btn-next',
     ];
 
-    targetSelectors.forEach(sel => {
+    transportSelectors.forEach((sel) => {
       const el = $(sel);
       if (!el) return;
       if (isGuest) {
@@ -81,6 +281,21 @@
       } else {
         el.style.pointerEvents = 'auto';
         el.style.opacity = '1';
+      }
+    });
+
+    ['#np-progress-bar', '#pb-progress'].forEach((sel) => {
+      const el = $(sel);
+      if (!el) return;
+      if (!seekOk) {
+        el.style.pointerEvents = 'none';
+        el.style.opacity = isGuest ? '0.35' : '1';
+        el.title =
+          'Trong phòng không tua thanh — dùng Next/Prev và Play (host). Tránh spam vị trí, lag cả phòng.';
+      } else {
+        el.style.pointerEvents = 'auto';
+        el.style.opacity = '1';
+        el.removeAttribute('title');
       }
     });
 
@@ -112,11 +327,6 @@
     const p = $('#greeting-sub');
     if (h2) h2.textContent = text;
     if (p) p.textContent = sub;
-    if (window.electronAPI && window.electronAPI.onUpdateMsg) {
-      window.electronAPI.onUpdateMsg((msg) => toast(msg, 'info'));
-      // Signal ready to main process
-      window.electronAPI.signalReady();
-    }
   }
 
   // ── Init ──────────────────────────────────────────────────────
@@ -140,6 +350,7 @@
     detectPerformanceMode();
     checkServer();
     loadState();
+    setupThemeToggle();
     setupPerformanceToggle();
     setupParticles();
     setupNavigation();
@@ -150,25 +361,64 @@
     setupKeyboardShortcuts();
     setupIdleDetection();
     setupModals();
+    setupElectronUpdaterUI();
+    if (window.electronAPI?.onUpdateMsg) {
+      window.electronAPI.onUpdateMsg((msg) => toast(msg, 'info'));
+    }
     setupMediaSession();
     setupQueueTabs();
-    setupRoom(); // Initialize socket
+    // Lazy init room realtime to reduce CPU when user just opens the app.
+    let roomFeatureInitialized = false;
+    const hasRoomParam = window.location.search.includes('room=');
+    if (hasRoomParam) {
+      roomFeatureInitialized = true;
+      setupRoom();
+    } else {
+      $('#nav-btn-room')?.addEventListener('click', () => {
+        if (!roomFeatureInitialized) {
+          roomFeatureInitialized = true;
+          setupRoom();
+        }
+      });
+    }
     setupVisualizer(); // Initialize Web Audio API
+    setupTrendingTabs();
+    setupSuggestTabs();
+    setupNpPanelSplitter();
+    setupCommunityChartPlayAll();
     loadTrending();
+    loadCommunityChart();
     loadPersonalizedRecommendations();
     renderPlaylists();
     setGreeting();
     audio.volume = state.volume / 100;
     $('#fav-count').textContent = state.favorites.length;
 
-    // Allow manual check by clicking version
+    // Background saver: when window is hidden/minimized to tray.
+    if (window.electronAPI?.onAppVisibility) {
+      window.electronAPI.onAppVisibility((payload) => {
+        const hidden = !!payload?.hidden;
+        state.backgroundSaver = hidden;
+
+        // Stop/disable expensive visuals when hidden.
+        if (hidden) {
+          window.__miguVisualizer?.stop?.();
+          setupParticles(); // will hide particles when backgroundSaver=true
+        } else {
+          setupParticles();
+          if (state.currentView === 'nowplaying') window.__miguVisualizer?.start?.();
+        }
+      });
+    }
+
+    // Allow manual update check by clicking version label
     const ver = $('.logo-version');
     if (ver) {
       ver.style.cursor = 'pointer';
       ver.title = 'Click để kiểm tra cập nhật';
       ver.addEventListener('click', () => {
         toast('Đang kiểm tra cập nhật...', 'info');
-        if (window.electronAPI) window.electronAPI.checkUpdate();
+        window.electronAPI?.checkUpdate?.();
       });
     }
 
@@ -183,6 +433,19 @@
         showBar(true);
       }
     }
+
+    // Signal renderer ready so updater can start check.
+    setTimeout(() => {
+      window.electronAPI?.signalReady?.();
+    }, 120);
+
+    window.addEventListener('beforeunload', () => {
+      if (saveStateTimer) {
+        clearTimeout(saveStateTimer);
+        saveStateTimer = null;
+      }
+      persistStateNow();
+    });
   }
 
   function detectPerformanceMode() {
@@ -199,46 +462,27 @@
     return !!state.superSaverMode;
   }
 
+  function isBackgroundSaver() {
+    return !!state.backgroundSaver;
+  }
+
   function setupPerformanceToggle() {
     const btn = $('#btn-super-mode');
-    const mixBtn = $('#btn-mix-mode');
     if (!btn) return;
 
-    const refreshMixLabel = () => {
-      if (!mixBtn) return;
-      const sec = Number(state.mixTransitionSeconds || 0);
-      const superOn = isSuperMode();
-      mixBtn.classList.toggle('disabled', superOn);
-      mixBtn.disabled = superOn;
-      mixBtn.textContent = superOn
-        ? '🎚 Mix chuyển bài: OFF (Super mode)'
-        : (sec > 0 ? `🎚 Mix chuyển bài: ON (${sec}s)` : '🎚 Mix chuyển bài: OFF');
-    };
+    const superMeta = btn.querySelector('[data-super-meta]');
 
     const refreshLabel = () => {
       const on = isSuperMode();
-      btn.classList.toggle('on', on);
-      btn.textContent = on ? '⚡ Super tiết kiệm: ON' : '⚡ Super tiết kiệm: OFF';
-      refreshMixLabel();
+      btn.classList.toggle('is-active', on);
+      if (superMeta) {
+        superMeta.textContent = on
+          ? 'Đang bật · gợi ý & hiệu ứng tắt'
+          : 'Tắt — nhấn để tiết kiệm RAM/CPU';
+      }
     };
 
     refreshLabel();
-    if (mixBtn) {
-      mixBtn.addEventListener('click', () => {
-        if (isSuperMode()) return;
-        const cycle = [0, 2, 4];
-        const idx = cycle.indexOf(Number(state.mixTransitionSeconds || 0));
-        state.mixTransitionSeconds = cycle[(idx + 1) % cycle.length];
-        saveState();
-        refreshMixLabel();
-        toast(
-          state.mixTransitionSeconds > 0
-            ? `Bật mix chuyển bài ${state.mixTransitionSeconds}s`
-            : 'Đã tắt mix chuyển bài',
-          'info'
-        );
-      });
-    }
     btn.addEventListener('click', () => {
       state.superSaverMode = !state.superSaverMode;
       saveState();
@@ -254,6 +498,14 @@
       if (rec && state.superSaverMode) {
         rec.innerHTML = '<div class="empty-state small" style="grid-column: 1 / -1;"><p>Super mode: tắt gợi ý cá nhân</p></div>';
       }
+      const chart = $('#community-chart-container');
+      const chartBtn = $('#btn-play-community-chart');
+      if (state.superSaverMode) {
+        if (chart) {
+          chart.innerHTML = '<div class="empty-state small" style="grid-column: 1 / -1;"><p>Super mode: ẩn Top nghe nhiều để tiết kiệm hiệu năng</p></div>';
+        }
+        if (chartBtn) chartBtn.style.display = 'none';
+      }
 
       toast(state.superSaverMode ? 'Đã bật Super tiết kiệm' : 'Đã tắt Super tiết kiệm', 'info');
       if (state.superSaverMode && state.currentView === 'nowplaying') {
@@ -262,12 +514,41 @@
       if (syncHeartbeat) {
         clearInterval(syncHeartbeat);
         syncHeartbeat = setInterval(() => {
-          if (isRoomHost && roomChannel && roomCode) emitRoomState();
-        }, state.superSaverMode ? 7000 : 3000);
+          if (isRoomHost && roomChannel && roomCode) emitRoomPlaybackTick();
+        }, state.superSaverMode ? ROOM_TICK_MS_SUPER : ROOM_TICK_MS);
       }
       if (!state.superSaverMode) {
-        loadPersonalizedRecommendations();
+        loadPersonalizedRecommendations({ preferCache: true });
       }
+    });
+  }
+
+  function applyTheme(theme) {
+    const nextTheme = theme === 'dark' ? 'dark' : 'normal';
+    state.theme = nextTheme;
+    document.body.dataset.theme = nextTheme;
+  }
+
+  function setupThemeToggle() {
+    const btn = $('#btn-theme-toggle');
+    applyTheme(state.theme);
+    if (!btn) return;
+
+    const label = btn.querySelector('[data-theme-label]');
+    const icon = btn.querySelector('[data-theme-icon]');
+    const refreshThemeLabel = () => {
+      const isDark = state.theme === 'dark';
+      btn.classList.toggle('active', isDark);
+      if (label) label.textContent = isDark ? 'Dark mode' : 'Normal mode';
+      if (icon) icon.textContent = isDark ? '🌑' : '◐';
+    };
+
+    refreshThemeLabel();
+    btn.addEventListener('click', () => {
+      applyTheme(state.theme === 'dark' ? 'normal' : 'dark');
+      saveState();
+      refreshThemeLabel();
+      toast(state.theme === 'dark' ? 'Đã bật Dark mode ' : 'Đã bật Normal mode', 'info');
     });
   }
 
@@ -286,7 +567,13 @@
         state.shuffle = d.shuffle || false;
         state.listeningHistory = Array.isArray(d.listeningHistory) ? d.listeningHistory.slice(-120) : [];
         state.superSaverMode = !!d.superSaverMode;
-        state.mixTransitionSeconds = Number(d.mixTransitionSeconds || 0);
+        // Backward compatibility: old "light" now maps to "normal".
+        state.theme = d.theme === 'dark' ? 'dark' : 'normal';
+        state.dismissedSuggestionIds = Array.isArray(d.dismissedSuggestionIds) ? d.dismissedSuggestionIds : [];
+        enforceStateLimits();
+        if (state.currentIndex >= state.queue.length) {
+          state.currentIndex = state.queue.length ? state.queue.length - 1 : -1;
+        }
       }
     } catch (e) { /* silent */ }
   }
@@ -318,7 +605,8 @@
     }
   }
 
-  function saveState() {
+  function persistStateNow() {
+    enforceStateLimits();
     try {
       localStorage.setItem('migu_state', JSON.stringify({
         favorites: state.favorites,
@@ -330,9 +618,18 @@
         shuffle: state.shuffle,
         listeningHistory: state.listeningHistory.slice(-120),
         superSaverMode: state.superSaverMode,
-        mixTransitionSeconds: state.mixTransitionSeconds,
+        theme: state.theme,
+        dismissedSuggestionIds: state.dismissedSuggestionIds.slice(-MAX_DISMISSED_SUGGESTIONS),
       }));
     } catch (e) { /* silent */ }
+  }
+
+  function saveState() {
+    if (saveStateTimer) clearTimeout(saveStateTimer);
+    saveStateTimer = setTimeout(() => {
+      saveStateTimer = null;
+      persistStateNow();
+    }, SAVE_STATE_DEBOUNCE_MS);
   }
 
   function recordListeningSnapshot(song, ended = false) {
@@ -357,16 +654,23 @@
       state.listeningHistory = state.listeningHistory.slice(-150);
     }
     saveState();
+    if (ended) void reportPlayComplete(song);
+  }
+
+  function initSupabaseClient() {
+    if (supabase) return true;
+    if (typeof window.supabase === 'undefined') return false;
+    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    return true;
   }
 
   // ── Room (Supabase Listen Together) ──────────────────────────────────
   function setupRoom() {
-    if (typeof window.supabase === 'undefined') {
-      console.warn('[MiGu] Supabase SDK not found. Room feature disabled.');
+    if (!initSupabaseClient()) {
+      console.warn('[MiGu] Supabase SDK not found. Room & community chart disabled.');
       return;
     }
 
-    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     console.log('[MiGu] Supabase initialized');
 
     setupGlobalLobby();
@@ -403,8 +707,28 @@
       }
       roomCode = null;
       isRoomHost = false;
+      window.currentRoomHostId = null;
+      clearGuestAutoplayUnlock();
+      pendingHostSyncSeek = null;
+      window.targetSyncTime = null;
       hasShownSyncPrompt = false;
+      isProcessingRoomSync = false;
       if (globalLobbyChannel) globalLobbyChannel.untrack().catch(() => { });
+
+      try {
+        audio.pause();
+        audio.removeAttribute('src');
+        audio.load();
+      } catch (_) { /* ignore */ }
+      state.isPlaying = false;
+      state.roomQueue = [];
+      state.currentSongInfo = null;
+      state.currentIndex = -1;
+      updatePlayBtns(false);
+      updateUI(null);
+      showBar(false);
+      const chatBox = $('#room-chat-messages');
+      if (chatBox) chatBox.innerHTML = '';
 
       
       const tabRoom = $('#tab-room-queue');
@@ -414,13 +738,20 @@
       renderQueue();
 
       if (syncHeartbeat) { clearInterval(syncHeartbeat); syncHeartbeat = null; }
+      resetGuestSyncPlaybackRate();
       $('#room-setup-panel').style.display = 'block';
       $('#room-active-panel').style.display = 'none';
       applyHostPermissions();
-      updatePlayBtns(false);
       switchView('home');
       history.pushState({}, '', window.location.pathname);
+      saveState();
       toast('Đã rời phòng', 'info');
+    });
+
+    $('#btn-copy-room-code')?.addEventListener('click', () => {
+      if (!roomCode) return;
+      navigator.clipboard.writeText(roomCode);
+      toast('Đã copy mã phòng', 'success');
     });
 
     $('#btn-copy-room-link')?.addEventListener('click', () => {
@@ -432,6 +763,7 @@
     $('#host-sync-mode')?.addEventListener('change', (e) => {
       if (isRoomHost) {
         emitRoomState({ syncMode: e.target.checked ? 'sync' : 'start' });
+        applyHostPermissions();
         toast(e.target.checked ? 'Đã bật ép đồng bộ' : 'Người nghe tự do', 'info');
       }
     });
@@ -441,8 +773,8 @@
       const input = $('#room-chat-input');
       const text = input.value.trim();
       if (text && roomChannel) {
-        roomChannel.send({ type: 'broadcast', event: 'chat', payload: { text } });
-        addChatMessage(text, true);
+        roomChannel.send({ type: 'broadcast', event: 'chat', payload: { text, senderId: myUserId } });
+        addChatMessage(text, true, myUserId);
         input.value = '';
       }
     });
@@ -493,6 +825,34 @@
     return roomCode && mode === 'sync';
   }
 
+  /** In room nobody scrubs — host/guest. Tua gửi currentTime liên tục, gây lag; chỉ next/prev/play/volume. */
+  function canScrubTimeline() {
+    return !roomCode;
+  }
+
+  /** Nhiều presence key có thể cùng quảng bá một roomId (reconnect, đổi host, phiên cũ chưa hết hạn). */
+  function dedupeLobbyRoomsByRoomId(entries) {
+    const map = new Map();
+    for (const raw of entries) {
+      if (!raw || !raw.roomId) continue;
+      const id = String(raw.roomId).trim().toUpperCase();
+      const prev = map.get(id);
+      if (!prev) {
+        map.set(id, { ...raw, roomId: id });
+        continue;
+      }
+      map.set(id, {
+        ...prev,
+        ...raw,
+        roomId: id,
+        usersCount: Math.max(Number(prev.usersCount) || 0, Number(raw.usersCount) || 0),
+      });
+    }
+    return Array.from(map.values()).sort((a, b) =>
+      String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' })
+    );
+  }
+
   function setupGlobalLobby() {
     globalLobbyChannel = supabase.channel('global_lobby');
     globalLobbyChannel
@@ -504,6 +864,7 @@
             activePublicRooms.push(presences[0]);
           }
         }
+        activePublicRooms = dedupeLobbyRoomsByRoomId(activePublicRooms);
         renderLobbyRooms();
       })
       .subscribe(async (status) => {
@@ -568,6 +929,8 @@
 
   async function joinRoomByCode(code, isCreating = false, metadata = null) {
     if (metadata) window.currentRoomMetadata = metadata;
+    clearGuestAutoplayUnlock();
+    pendingHostSyncSeek = null;
     if (roomChannel) {
       await supabase.removeChannel(roomChannel);
     }
@@ -593,10 +956,8 @@
 
     if (syncHeartbeat) clearInterval(syncHeartbeat);
     syncHeartbeat = setInterval(() => {
-      if (isRoomHost && roomChannel && roomCode) {
-        emitRoomState();
-      }
-    }, isSuperMode() ? 7000 : 3000);
+      if (isRoomHost && roomChannel && roomCode) emitRoomPlaybackTick();
+    }, isSuperMode() ? ROOM_TICK_MS_SUPER : ROOM_TICK_MS);
 
     roomChannel = supabase.channel(`room:${roomCode}`, {
       config: { presence: { key: myUserId } }
@@ -676,7 +1037,8 @@
         handleStateUpdate(payload);
       })
       .on('broadcast', { event: 'chat' }, ({ payload }) => {
-        addChatMessage(payload.text, false);
+        const senderId = payload?.senderId || null;
+        addChatMessage(payload.text, senderId === myUserId, senderId);
         toast(`Tin nhắn mới: ${payload.text}`, 'info');
       })
       .on('broadcast', { event: 'reaction' }, ({ payload }) => {
@@ -720,7 +1082,11 @@
     if (!roomCode || update.senderId === myUserId) return;
 
     // Strict Host Validation for playback updates
-    const isPlaybackUpdate = update.currentSong !== undefined || update.isPlaying !== undefined || update.currentTime !== undefined;
+    const isPlaybackUpdate =
+      update.currentSong !== undefined ||
+      update.isPlaying !== undefined ||
+      update.currentTime !== undefined ||
+      update.syncAnchorAt !== undefined;
     if (isPlaybackUpdate && window.currentRoomHostId && update.senderId !== window.currentRoomHostId) {
       console.warn(`[Sync] Ignoring playback update from non-host: ${update.senderId}`);
       return;
@@ -729,57 +1095,125 @@
     isProcessingRoomSync = true;
 
     if (update.queue !== undefined) {
-      if (update.queue.length > state.roomQueue.length && state.roomQueue.length > 0) {
-        const newSong = update.queue[update.queue.length - 1];
-        if (newSong) toast(`Bài mới được thêm: ${newSong.title}`, 'success');
+      const prevRoomQueueLen = state.roomQueue.length;
+      const incoming = Array.isArray(update.queue) ? update.queue : [];
+
+      if (isRoomHost && update.senderId !== myUserId) {
+        const curVid = state.currentSongInfo?.videoId;
+        const guestMissingNowPlaying =
+          !!(curVid && !incoming.some((s) => s && s.videoId === curVid));
+
+        if (guestMissingNowPlaying) {
+          // Guest queue is behind (e.g. host skipped next). Do not replace — would drop the live track from the list.
+          const hostIds = new Set(
+            state.roomQueue.map((s) => s && s.videoId).filter(Boolean)
+          );
+          let appended = false;
+          for (const s of incoming) {
+            if (s && s.videoId && !hostIds.has(s.videoId)) {
+              state.roomQueue.push(s);
+              hostIds.add(s.videoId);
+              appended = true;
+            }
+          }
+          if (appended) {
+            const ns = state.roomQueue[state.roomQueue.length - 1];
+            if (ns) toast(`Bài mới được thêm: ${ns.title}`, 'success');
+          }
+          emitRoomState({}, true);
+        } else {
+          if (incoming.length > state.roomQueue.length && state.roomQueue.length > 0) {
+            const newSong = incoming[incoming.length - 1];
+            if (newSong) toast(`Bài mới được thêm: ${newSong.title}`, 'success');
+          }
+          state.roomQueue = incoming.slice();
+        }
+      } else if (!isRoomHost) {
+        if (incoming.length > state.roomQueue.length && state.roomQueue.length > 0) {
+          const newSong = incoming[incoming.length - 1];
+          if (newSong) toast(`Bài mới được thêm: ${newSong.title}`, 'success');
+        }
+        state.roomQueue = incoming.slice();
       }
-      state.roomQueue = update.queue;
+
       if (state.activeQueueTab === 'room') renderQueue();
       renderRoomQueue();
+
+      // Host: guest(s) added tracks while we were idle at the end of the current song — continue playlist
+      if (isRoomHost && update.senderId !== myUserId && state.roomQueue.length > prevRoomQueueLen) {
+        const dur = Number(audio.duration || 0);
+        const cur = Number(audio.currentTime || 0);
+        const atEnd = !state.isPlaying && state.currentSongInfo && (
+          audio.ended ||
+          (Number.isFinite(dur) && dur > 0 && cur >= dur - 0.85)
+        );
+        if (atEnd) {
+          const vid = state.currentSongInfo.videoId;
+          const idx = state.roomQueue.findIndex((s) => s && s.videoId === vid);
+          if (idx >= 0 && idx < state.roomQueue.length - 1) {
+            state.currentIndex = idx + 1;
+            playSong(state.roomQueue[state.currentIndex], false);
+          }
+        }
+      }
     }
 
     if (update.currentSong !== undefined && update.currentSong !== null) {
       const isNewSong = !state.currentSongInfo || state.currentSongInfo.videoId !== update.currentSong.videoId;
-      
-      // Store target sync time for when metadata is loaded
-      window.targetSyncTime = update.currentTime || 0;
 
       if (isNewSong) {
+        resetGuestSyncPlaybackRate();
+        window.targetSyncTime = null;
+        if (update.syncAnchorAt != null && update.syncAudioTime != null) {
+          pendingHostSyncSeek = {
+            syncAnchorAt: update.syncAnchorAt,
+            syncAudioTime: update.syncAudioTime,
+            isPlaying: update.isPlaying,
+          };
+        } else {
+          pendingHostSyncSeek = null;
+          window.targetSyncTime = update.currentTime ?? 0;
+        }
+
         state.currentIndex = update.queue ? update.queue.findIndex(q => q.videoId === update.currentSong.videoId) : state.currentIndex;
         state.currentSongInfo = update.currentSong;
         updateUI(update.currentSong);
         showBar(true);
-        
+
         try {
           audio.src = '/api/stream/' + update.currentSong.videoId;
           audio.load();
-          
-          // Ensure we jump to time ONLY after metadata is ready
+
           audio.onloadedmetadata = () => {
-             if (window.targetSyncTime !== null) {
-                console.log(`[Sync] Metadata loaded, jumping to: ${window.targetSyncTime}s`);
-                audio.currentTime = window.targetSyncTime;
-                const t = window.targetSyncTime;
-                window.targetSyncTime = null;
-                if (update.isPlaying) {
-                  audio.play().catch((err) => {
-                    console.warn('[Sync] Autoplay blocked, showing prompt');
-                    toast('Bấm Play để đồng bộ với Host', 'info');
-                  });
-                }
-             }
+            let seekSec = 0;
+            if (pendingHostSyncSeek) {
+              seekSec = getEffectiveHostPlaybackTime(pendingHostSyncSeek);
+              pendingHostSyncSeek = null;
+            } else if (window.targetSyncTime !== null) {
+              seekSec = window.targetSyncTime;
+              window.targetSyncTime = null;
+            }
+            console.log(`[Sync] Metadata loaded, jumping to: ${seekSec}s`);
+            audio.currentTime = seekSec;
+            if (update.isPlaying) {
+              audio
+                .play()
+                .then(() => clearGuestAutoplayUnlock())
+                .catch(() => scheduleGuestAutoplayUnlock());
+            }
           };
-        } catch (e) { }
+        } catch (e) { /* ignore */ }
       } else if (window.targetSyncTime !== null) {
-        // Same song, but we just joined and need to align to targetSyncTime
-        console.log(`[Sync] Same song, immediate jump to: ${window.targetSyncTime}s`);
-        audio.currentTime = window.targetSyncTime;
+        resetGuestSyncPlaybackRate();
+        const seekTo = window.targetSyncTime;
         window.targetSyncTime = null;
+        console.log(`[Sync] Same song, immediate jump to: ${seekTo}s`);
+        audio.currentTime = seekTo;
         if (update.isPlaying && audio.paused) {
-          audio.play().catch(() => {
-            console.warn('[Sync] Autoplay blocked on same-song join');
-            toast('Bấm Play để đồng bộ với Host', 'info');
-          });
+          audio
+            .play()
+            .then(() => clearGuestAutoplayUnlock())
+            .catch(() => scheduleGuestAutoplayUnlock());
         }
       }
     }
@@ -794,19 +1228,55 @@
     if (isSync) {
       if (update.isPlaying !== undefined) {
         if (update.isPlaying && audio.paused) {
-          audio.play().catch(() => { });
+          audio
+            .play()
+            .then(() => clearGuestAutoplayUnlock())
+            .catch(() => scheduleGuestAutoplayUnlock());
         } else if (!update.isPlaying && !audio.paused) {
           audio.pause();
         }
         state.isPlaying = update.isPlaying;
         updatePlayBtns(update.isPlaying);
       }
-      if (update.currentTime !== undefined && window.targetSyncTime === null) {
-        // Only jump if deviation is significant (> 2.5s)
-        const deviation = Math.abs(audio.currentTime - update.currentTime);
-        if (deviation > 2.5) {
-          console.log(`[Sync] Correcting drift from Host: ${deviation.toFixed(2)}s`);
-          audio.currentTime = update.currentTime + 0.3; 
+      const canDriftCorrect =
+        !isRoomHost &&
+        window.targetSyncTime === null &&
+        !pendingHostSyncSeek &&
+        (update.syncAnchorAt != null || update.currentTime !== undefined);
+      if (canDriftCorrect) {
+        const hostT = getEffectiveHostPlaybackTime(update);
+        if (audio.paused || !Number.isFinite(hostT)) {
+          /* avoid fighting pause / invalid packets */
+        } else {
+          const localT = Number(audio.currentTime);
+          if (!Number.isFinite(localT)) {
+            /* still loading */
+          } else {
+            const delta = hostT - localT;
+            const deviation = Math.abs(delta);
+            const now = Date.now();
+            const dur = Number(audio.duration || 0);
+
+            // In sync: prefer gentle playbackRate nudges (no buffer flush) unless very far behind/ahead.
+            if (deviation <= 0.55) {
+              if (Math.abs(audio.playbackRate - 1) > 0.004) {
+                scheduleGuestPlaybackRateReset(700);
+              }
+            } else if (deviation < 6) {
+              const sign = delta > 0 ? 1 : -1;
+              const bump = Math.min(0.06, deviation * 0.009);
+              try {
+                audio.playbackRate = Math.max(0.93, Math.min(1.07, 1 + sign * bump));
+                scheduleGuestPlaybackRateReset(5200);
+              } catch (_) { /* ignore */ }
+            } else if (now - lastDriftCorrectionAt > 5200) {
+              lastDriftCorrectionAt = now;
+              resetGuestSyncPlaybackRate();
+              console.log(`[Sync] Hard correct drift: ${deviation.toFixed(2)}s`);
+              const cap = Number.isFinite(dur) && dur > 0 ? Math.max(0, dur - 0.08) : hostT;
+              audio.currentTime = Math.max(0, Math.min(hostT + 0.06, cap));
+            }
+          }
         }
       }
     } else {
@@ -820,33 +1290,88 @@
     isProcessingRoomSync = false;
   }
 
+  /** Chỉ mốc phát + trạng thái — không gửi lại queue (giảm tải Supabase realtime). */
+  function emitRoomPlaybackTick() {
+    if (!roomChannel || !roomCode || !isRoomHost) return;
+    const now = Date.now();
+    roomChannel.send({
+      type: 'broadcast',
+      event: 'room_state',
+      payload: {
+        senderId: myUserId,
+        syncAnchorAt: now,
+        syncAudioTime: audio.currentTime,
+        isPlaying: state.isPlaying,
+        syncMode: $('#host-sync-mode')?.checked ? 'sync' : 'start',
+        currentSong: state.currentSongInfo,
+      },
+    });
+  }
+
   function emitRoomState(partialState = {}, force = false) {
     if (!roomChannel || !roomCode || (isProcessingRoomSync && !force)) return;
-    
+
+    const now = Date.now();
+    if (
+      isRoomHost &&
+      !force &&
+      Object.keys(partialState).length === 0 &&
+      now - lastHostEmitAt < HOST_EMIT_DEBOUNCE_MS
+    ) {
+      return;
+    }
+
     const update = {
       senderId: myUserId,
       queue: state.roomQueue,
-      ...partialState
+      ...partialState,
     };
 
     if (isRoomHost) {
+      const anchorNow = Date.now();
       update.currentSong = state.currentSongInfo;
       update.isPlaying = state.isPlaying;
+      update.syncAnchorAt = anchorNow;
+      update.syncAudioTime = audio.currentTime;
       update.currentTime = audio.currentTime;
       update.syncMode = $('#host-sync-mode')?.checked ? 'sync' : 'start';
-      
-      // ONLY the host broadcasts playback state to everyone
+      lastHostEmitAt = Date.now();
       roomChannel.send({ type: 'broadcast', event: 'room_state', payload: update });
     } else if (partialState.queue) {
-      // Guests can ONLY broadcast queue updates (like adding a song)
-      roomChannel.send({ type: 'broadcast', event: 'room_state', payload: { senderId: myUserId, queue: partialState.queue || state.roomQueue } });
+      roomChannel.send({
+        type: 'broadcast',
+        event: 'room_state',
+        payload: { senderId: myUserId, queue: partialState.queue || state.roomQueue },
+      });
     }
   }
 
-  function addChatMessage(text, isSelf) {
+  function getRoomUserLabel(senderId) {
+    if (!senderId) return 'Guest';
+    const hostId = window.currentRoomHostId || null;
+    if (hostId && senderId === hostId) return 'Host';
+
+    const presence = roomChannel?.presenceState?.() || {};
+    const guests = [];
+    for (const [key, presences] of Object.entries(presence)) {
+      if (hostId && key === hostId) continue;
+      const joinedAt = Number(presences?.[0]?.joined_at);
+      guests.push({ key, joinedAt: Number.isFinite(joinedAt) ? joinedAt : Number.POSITIVE_INFINITY });
+    }
+
+    guests.sort((a, b) => (a.joinedAt - b.joinedAt) || a.key.localeCompare(b.key));
+    const rank = guests.findIndex((u) => u.key === senderId);
+    if (rank >= 0) return `Guest ${rank + 1}`;
+    return senderId === myUserId ? (isRoomHost ? 'Host' : 'Guest') : 'Guest';
+  }
+
+  function addChatMessage(text, isSelf, senderId = null) {
     const box = $('#room-chat-messages');
     if (!box) return;
     const el = document.createElement('div');
+    el.style.display = 'flex';
+    el.style.flexDirection = 'column';
+    el.style.gap = '4px';
     el.style.padding = '8px 12px';
     el.style.borderRadius = '16px';
     el.style.maxWidth = '85%';
@@ -863,7 +1388,20 @@
       el.style.color = 'white';
       el.style.borderBottomLeftRadius = '4px';
     }
-    el.textContent = text;
+
+    const senderNameEl = document.createElement('div');
+    senderNameEl.textContent = getRoomUserLabel(senderId);
+    senderNameEl.style.fontSize = '11px';
+    senderNameEl.style.fontWeight = '600';
+    senderNameEl.style.opacity = isSelf ? '0.9' : '0.75';
+    senderNameEl.style.letterSpacing = '0.2px';
+
+    const msgEl = document.createElement('div');
+    msgEl.textContent = text;
+    msgEl.style.wordBreak = 'break-word';
+
+    el.appendChild(senderNameEl);
+    el.appendChild(msgEl);
     box.appendChild(el);
     box.scrollTop = box.scrollHeight;
   }
@@ -893,51 +1431,53 @@
   function renderRoomQueue() {
     const container = $('#room-queue-container');
     if (!container) return;
-    container.innerHTML = state.roomQueue.map((song, i) => `
-      <div class="queue-item ${state.currentSongInfo && song.videoId === state.currentSongInfo.videoId ? 'active' : ''}" style="margin-bottom:8px;" data-index="${i}">
+    const canManageRoomQueue = !!isRoomHost;
+    const entries = isSuperMode()
+      ? getWindowedEntries(state.roomQueue, state.currentIndex, SUPER_ROOM_QUEUE_RENDER_LIMIT)
+      : state.roomQueue.map((item, index) => ({ item, index }));
+    container.innerHTML = entries.map(({ item: song, index: i }) => `
+      <div class="queue-item ${state.currentSongInfo && song.videoId === state.currentSongInfo.videoId ? 'active' : ''} ${canManageRoomQueue ? 'q-room-draggable' : ''}" style="margin-bottom:8px;" data-index="${i}" ${canManageRoomQueue ? 'draggable="true"' : ''}>
         <span class="queue-item-index" style="color:var(--text-secondary);font-size:12px;width:20px;text-align:center;">${i + 1}</span>
         <img class="queue-item-thumb" src="${song.thumbnail}" alt="" loading="lazy" style="width:40px;height:40px;border-radius:4px;object-fit:cover;">
         <div class="queue-item-info">
           <div class="queue-item-title">${esc(song.title)}</div>
           <div class="queue-item-artist">${esc(song.author)}</div>
         </div>
-        <div class="queue-item-actions" style="margin-left:auto; display:flex; gap:5px;">
-           <button class="btn-icon q-room-up" data-index="${i}" title="Chuyển lên đợi phát">
-             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"/></svg>
-           </button>
-           <button class="btn-icon q-room-remove" data-index="${i}" title="Xóa">
-             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
-           </button>
-        </div>
+        ${canManageRoomQueue ? `
+          <div class="queue-item-actions" style="margin-left:auto; display:flex; gap:5px; align-items:center;">
+            <button type="button" class="btn-icon q-room-play" data-index="${i}" title="Phát bài này" draggable="false">
+              <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+            </button>
+            <button type="button" class="btn-icon q-room-remove" data-index="${i}" title="Xóa" draggable="false">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
+        ` : ''}
       </div>
     `).join('');
 
-    container.querySelectorAll('.q-room-up').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const idx = parseInt(btn.dataset.index);
-        if (idx > 0 && idx !== state.currentIndex) {
-          let target = state.currentIndex >= 0 ? state.currentIndex + 1 : 0;
-          if (target > idx) target--; // Compensate for the element we are about to remove
-
-          const song = state.roomQueue.splice(idx, 1)[0];
-          state.roomQueue.splice(target, 0, song);
-
-          if (idx < state.currentIndex && target >= state.currentIndex) state.currentIndex--;
-          else if (idx > state.currentIndex && target <= state.currentIndex) state.currentIndex++;
-
-          renderRoomQueue();
-          if (state.activeQueueTab === 'room') renderQueue();
-          saveState();
-          emitRoomState({ queue: state.roomQueue });
+    container.onclick = (e) => {
+      const playRoomBtn = e.target.closest('.q-room-play');
+      if (playRoomBtn) {
+        if (!isRoomHost) {
+          toast('Chỉ Host mới điều khiển phát trong phòng', 'info');
+          return;
         }
-      });
-    });
-
-    container.querySelectorAll('.q-room-remove').forEach(btn => {
-      btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        const idx = parseInt(btn.dataset.index);
+        const idx = parseInt(playRoomBtn.dataset.index, 10);
+        const song = state.roomQueue[idx];
+        if (song) playSong(song, false);
+        return;
+      }
+
+      const removeBtn = e.target.closest('.q-room-remove');
+      if (removeBtn) {
+        if (!isRoomHost) {
+          toast('Chỉ Host mới có quyền chỉnh hàng chờ phòng', 'info');
+          return;
+        }
+        e.stopPropagation();
+        const idx = parseInt(removeBtn.dataset.index, 10);
         state.roomQueue.splice(idx, 1);
         if (idx < state.currentIndex) state.currentIndex--;
         else if (idx === state.currentIndex) {
@@ -953,8 +1493,66 @@
         if (state.activeQueueTab === 'room') renderQueue();
         saveState();
         emitRoomState({ queue: state.roomQueue });
-      });
-    });
+      }
+    };
+
+    if (!canManageRoomQueue) return;
+
+    let dragFromIndex = -1;
+    const clearDragMarkers = () => {
+      container.querySelectorAll('.queue-item').forEach((el) => el.classList.remove('drop-target'));
+    };
+
+    container.ondragstart = (e) => {
+      const row = e.target.closest('.queue-item.q-room-draggable');
+      if (!row) return;
+      dragFromIndex = parseInt(row.dataset.index, 10);
+      row.classList.add('dragging');
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', String(dragFromIndex));
+      }
+    };
+
+    container.ondragend = (e) => {
+      const row = e.target.closest('.queue-item.q-room-draggable');
+      if (row) row.classList.remove('dragging');
+      clearDragMarkers();
+      dragFromIndex = -1;
+    };
+
+    container.ondragover = (e) => {
+      if (dragFromIndex < 0) return;
+      const row = e.target.closest('.queue-item.q-room-draggable');
+      if (!row) return;
+      e.preventDefault();
+      clearDragMarkers();
+      row.classList.add('drop-target');
+    };
+
+    container.ondrop = (e) => {
+      if (dragFromIndex < 0) return;
+      const row = e.target.closest('.queue-item.q-room-draggable');
+      if (!row) return;
+      e.preventDefault();
+      const dropIndex = parseInt(row.dataset.index, 10);
+      clearDragMarkers();
+      if (!Number.isFinite(dropIndex) || dropIndex === dragFromIndex) return;
+
+      const moved = state.roomQueue.splice(dragFromIndex, 1)[0];
+      state.roomQueue.splice(dropIndex, 0, moved);
+
+      if (dragFromIndex < state.currentIndex && dropIndex >= state.currentIndex) state.currentIndex--;
+      else if (dragFromIndex > state.currentIndex && dropIndex <= state.currentIndex) state.currentIndex++;
+      else if (dragFromIndex === state.currentIndex) state.currentIndex = dropIndex;
+
+      renderRoomQueue();
+      if (state.activeQueueTab === 'room') renderQueue();
+      saveState();
+      emitRoomState({ queue: state.roomQueue });
+      toast('Đã đổi thứ tự hàng chờ phòng', 'success');
+      dragFromIndex = -1;
+    };
   }
 
 
@@ -962,13 +1560,16 @@
   function setupParticles() {
     const c = $('#particles');
     if (!c) return;
-    c.innerHTML = '';
-    if (isSuperMode()) {
+    // Giảm CPU: chỉ chạy hạt khi đang phát & đang ở màn hình có visual chính.
+    if (isSuperMode() || isBackgroundSaver() || !(state.isPlaying && (state.currentView === 'nowplaying' || state.currentView === 'room'))) {
       c.style.display = 'none';
       return;
     }
+
+    c.innerHTML = '';
     c.style.display = '';
-    const particleCount = state.lowPerformanceMode ? 8 : 25;
+    // Giảm số lượng hạt để hạn chế load CPU/GPU.
+    const particleCount = state.lowPerformanceMode ? 6 : 12;
     for (let i = 0; i < particleCount; i++) {
       const p = document.createElement('div');
       p.className = 'particle';
@@ -1021,7 +1622,15 @@
 
     if (view === 'search') setTimeout(() => $('#search-input')?.focus(), 100);
     if (view === 'favorites') renderFavoritesList();
-    if (view === 'home' && !isSuperMode()) loadPersonalizedRecommendations();
+    if (view === 'home') {
+      loadTrending({ preferCache: true });
+      loadCommunityChart({ preferCache: true });
+      if (!isSuperMode()) loadPersonalizedRecommendations({ preferCache: true });
+    }
+
+    // Visualizer loop: only run when actually visible.
+    if (view === 'nowplaying') window.__miguVisualizer?.start?.();
+    else window.__miguVisualizer?.stop?.();
 
     resetIdle();
   }
@@ -1157,7 +1766,7 @@
       };
 
       item.querySelector('[data-action="play"]')?.addEventListener('click', (e) => { e.stopPropagation(); playSong(song); });
-      item.querySelector('[data-action="add"]')?.addEventListener('click', (e) => { e.stopPropagation(); addToQueue(song); toast('Đã thêm vào hàng chờ', 'success'); });
+      item.querySelector('[data-action="add"]')?.addEventListener('click', (e) => { e.stopPropagation(); addToQueue(song); });
       item.querySelector('[data-action="fav"]')?.addEventListener('click', (e) => {
         e.stopPropagation(); toggleFav(song);
         e.currentTarget.classList.toggle('is-fav', state.favorites.some(f => f.videoId === id));
@@ -1167,6 +1776,7 @@
   }
 
   // ── Paste Link ────────────────────────────────────────────────
+  let pasteImportInFlight = false;
   function setupPasteLink() {
     const input = $('#paste-input');
     const btn = $('#btn-paste-play');
@@ -1199,14 +1809,28 @@
 
   async function handlePaste(url) {
     if (!url) return;
+    if (pasteImportInFlight) return;
+    pasteImportInFlight = true;
+    const pasteBtn = $('#btn-paste-play');
+    if (pasteBtn) pasteBtn.disabled = true;
     const ids = extractId(url);
-    if (!ids) { toast('Link không hợp lệ', 'error'); return; }
+    if (!ids) {
+      toast('Link không hợp lệ', 'error');
+      pasteImportInFlight = false;
+      if (pasteBtn) pasteBtn.disabled = false;
+      return;
+    }
 
     const { videoId, playlistId } = ids;
 
     // If it's a playlist, we prioritize that flow
     if (playlistId) {
-      handlePlaylistPaste(playlistId, videoId);
+      try {
+        await handlePlaylistPaste(playlistId, videoId);
+      } finally {
+        pasteImportInFlight = false;
+        if (pasteBtn) pasteBtn.disabled = false;
+      }
       return;
     }
 
@@ -1234,6 +1858,9 @@
     } catch (err) {
       preview.innerHTML = '<div class="empty-state small"><p>Không thể tải thông tin</p></div>';
       toast('Lỗi tải video', 'error');
+    } finally {
+      pasteImportInFlight = false;
+      if (pasteBtn) pasteBtn.disabled = false;
     }
   }
 
@@ -1304,22 +1931,40 @@
       else { q.push(song); state.currentIndex = q.length - 1; }
     }
 
+    if (roomCode && isRoomHost) {
+      const rq = state.roomQueue;
+      if (!rq.some((s) => s && s.videoId === song.videoId)) {
+        const ins =
+          Number.isFinite(state.currentIndex) && state.currentIndex >= 0
+            ? Math.min(state.currentIndex, rq.length)
+            : rq.length;
+        rq.splice(ins, 0, song);
+        state.currentIndex = rq.findIndex((s) => s && s.videoId === song.videoId);
+      }
+    }
+
     state.currentSongInfo = song;
+    nextStreamPrefetchVideoId = null;
+    endStallNudgeCount = 0;
     updateUI(song);
     showBar(true);
-    switchView('nowplaying');
+    if (roomCode && isRoomHost) {
+      switchView('room');
+    } else {
+      switchView('nowplaying');
+    }
 
     try {
       audio.src = `/api/stream/${encodeURIComponent(song.videoId)}`;
-      if (isRoomHost) emitRoomState(); 
       audio.load();
       await audio.play();
       state.isPlaying = true;
       updatePlayBtns(true);
       $('#np-disc')?.classList.add('spinning');
+      tryPrefetchNextTrackUrl();
       loadRecommendations(song.videoId);
-      loadPersonalizedRecommendations();
-      if (isRoomHost) emitRoomState(); 
+      loadPersonalizedRecommendations({ preferCache: true });
+      if (isRoomHost) emitRoomState();
     } catch (err) {
       console.error('Play error:', err);
       toast('Không thể phát bài hát này', 'error');
@@ -1464,45 +2109,55 @@
     if (!canvas) return;
 
     const ctx = canvas.getContext('2d');
+    let visRafId = null;
+    let dataArray = null;
+    let bufferLength = 0;
+    const CANVAS_SIZE = 260;
+    canvas.width = CANVAS_SIZE;
+    canvas.height = CANVAS_SIZE;
 
-    const initCtx = () => {
-      if (audioCtx) return;
-      console.log('[MiGu] Initializing Web Audio Context...');
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      analyser = audioCtx.createAnalyser();
-      source = audioCtx.createMediaElementSource(audio);
-      source.connect(analyser);
-      analyser.connect(audioCtx.destination);
-      analyser.fftSize = 128;
+    function shouldDraw() {
+      if (!analyser) return false;
+      if (isSuperMode()) return false;
+      if (state.currentView !== 'nowplaying') return false;
+      // Giảm CPU: chỉ vẽ khi thật sự đang play.
+      if (!state.isPlaying) return false;
+      if (audio?.paused || audio?.ended) return false;
+      if (state.lowPerformanceMode && !state.isPlaying) return false;
+      return true;
+    }
 
-      drawVisualizer();
-      window.removeEventListener('click', initCtx);
-      window.removeEventListener('keydown', initCtx);
-    };
+    function stopLoop() {
+      if (visRafId) {
+        cancelAnimationFrame(visRafId);
+        visRafId = null;
+      }
+    }
 
-    window.addEventListener('click', initCtx);
-    window.addEventListener('keydown', initCtx);
-
-    function drawVisualizer() {
-      if (!analyser) return;
-      requestAnimationFrame(drawVisualizer);
-      if (isSuperMode()) return;
+    function tick() {
+      if (!shouldDraw()) {
+        stopLoop();
+        return;
+      }
 
       if (state.lowPerformanceMode) {
         const now = Date.now();
-        if (now - state.lastVisualizerFrameAt < 66) return; // ~15 FPS
+        if (now - state.lastVisualizerFrameAt < 66) {
+          visRafId = requestAnimationFrame(tick);
+          return;
+        }
         state.lastVisualizerFrameAt = now;
       }
 
-      if (state.currentView !== 'nowplaying') return;
-      if (state.lowPerformanceMode && !state.isPlaying) return;
-
-      const bufferLength = analyser.frequencyBinCount;
-      const dataArray = new Uint8Array(bufferLength);
+      const nextBufferLength = analyser.frequencyBinCount;
+      if (!dataArray || bufferLength !== nextBufferLength) {
+        bufferLength = nextBufferLength;
+        dataArray = new Uint8Array(bufferLength);
+      }
       analyser.getByteFrequencyData(dataArray);
 
-      const w = canvas.width = 260;
-      const h = canvas.height = 260;
+      const w = canvas.width;
+      const h = canvas.height;
       ctx.clearRect(0, 0, w, h);
 
       const centerX = w / 2;
@@ -1525,7 +2180,36 @@
         ctx.lineTo(x2, y2);
         ctx.stroke();
       }
+
+      visRafId = requestAnimationFrame(tick);
     }
+
+    function startLoopIfNeeded() {
+      if (visRafId) return;
+      if (!shouldDraw()) return;
+      visRafId = requestAnimationFrame(tick);
+    }
+
+    // allow other parts to kick/stop the loop
+    window.__miguVisualizer = { start: startLoopIfNeeded, stop: stopLoop };
+
+    const initCtx = () => {
+      if (audioCtx) return;
+      console.log('[MiGu] Initializing Web Audio Context...');
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      analyser = audioCtx.createAnalyser();
+      source = audioCtx.createMediaElementSource(audio);
+      source.connect(analyser);
+      analyser.connect(audioCtx.destination);
+      analyser.fftSize = 128;
+
+      startLoopIfNeeded();
+      window.removeEventListener('click', initCtx);
+      window.removeEventListener('keydown', initCtx);
+    };
+
+    window.addEventListener('click', initCtx);
+    window.addEventListener('keydown', initCtx);
   }
 
   // ── Player Controls ───────────────────────────────────────────
@@ -1535,72 +2219,18 @@
   let endTransitionLock = false;
   let stallRecoverAttempts = 0;
   let pendingResumeTime = null;
-  let mixTransitionActive = false;
-  let mixFadeTimer = null;
 
   function setupPlayerControls() {
-    const getActiveMixSeconds = () => (isSuperMode() ? 0 : Number(state.mixTransitionSeconds || 0));
-
-    const clearMixTimers = () => {
-      mixTransitionActive = false;
-      if (mixFadeTimer) {
-        clearInterval(mixFadeTimer);
-        mixFadeTimer = null;
-      }
-    };
-
-    const startSimpleMixTransition = () => {
-      if (mixTransitionActive) return;
-      const mixSec = getActiveMixSeconds();
-      if (mixSec <= 0) return;
-      if (state.repeat === 'one') return;
-      if (!state.queue || state.queue.length < 2) return;
-      if (state.currentIndex < 0 || state.currentIndex >= state.queue.length - 1) return;
-
-      mixTransitionActive = true;
-      const targetVol = state.volume / 100;
-      // Keep transition short so we always switch before true end.
-      const totalMs = Math.max(350, Math.floor(mixSec * 650));
-      const stepMs = 100;
-      const steps = Math.max(1, Math.floor(totalMs / stepMs));
-      let i = 0;
-      const startVol = Math.max(0, Math.min(1, audio.volume));
-
-      mixFadeTimer = setInterval(() => {
-        i++;
-        audio.volume = Math.max(0, startVol * (1 - i / steps));
-        if (i < steps) return;
-
-        clearInterval(mixFadeTimer);
-        mixFadeTimer = null;
-        nextTrack();
-
-        setTimeout(() => {
-          let j = 0;
-          const inSteps = Math.max(1, Math.floor((totalMs * 0.75) / stepMs));
-          audio.volume = 0;
-          const inTimer = setInterval(() => {
-            j++;
-            audio.volume = Math.min(targetVol, targetVol * (j / inSteps));
-            if (j >= inSteps) {
-              clearInterval(inTimer);
-              audio.volume = targetVol;
-              mixTransitionActive = false;
-            }
-          }, stepMs);
-        }, 120);
-      }, stepMs);
-    };
-
     const handleTrackEnded = (fromWatchdog = false) => {
       if (endTransitionLock) return;
       endTransitionLock = true;
-      clearMixTimers();
 
       if (state.currentSongInfo) recordListeningSnapshot(state.currentSongInfo, true);
       state.isPlaying = false;
       updatePlayBtns(false);
       emitRoomState({ isPlaying: false });
+      // Stop watchdog to reduce idle CPU.
+      stopPlaybackWatchdogTimer?.();
 
       if (state.repeat === 'one') {
         audio.currentTime = 0;
@@ -1616,9 +2246,26 @@
       setTimeout(() => { endTransitionLock = false; }, 400);
     };
 
+    let toggleInFlight = false;
     const toggle = () => {
-      if (!audio.src) return;
-      if (state.isPlaying) {
+      if (!audio.src) {
+        if (roomCode && isRoomHost && state.roomQueue.length > 0) {
+          const idx = state.currentIndex >= 0 ? state.currentIndex : 0;
+          const song = state.roomQueue[idx] || state.roomQueue[0];
+          if (song) playSong(song, false);
+          return;
+        }
+        if (!roomCode && state.queue.length > 0) {
+          const idx = state.currentIndex >= 0 ? state.currentIndex : 0;
+          const song = state.queue[idx] || state.queue[0];
+          if (song) playSong(song, false);
+          return;
+        }
+        return;
+      }
+      if (toggleInFlight) return;
+      const actuallyPlaying = !audio.paused && !audio.ended;
+      if (actuallyPlaying) {
         audio.pause();
         state.isPlaying = false;
         updatePlayBtns(false);
@@ -1626,6 +2273,7 @@
         updateDiscordRPC();
       } else {
         // updatePlayBtns must be called AFTER play() resolves
+        toggleInFlight = true;
         audio.play().then(() => {
           state.isPlaying = true;
           updatePlayBtns(true);
@@ -1633,6 +2281,8 @@
           updateDiscordRPC();
         }).catch((err) => {
           console.warn('Play rejected:', err);
+        }).finally(() => {
+          toggleInFlight = false;
         });
       }
     };
@@ -1670,8 +2320,9 @@
     });
     repeatBtn?.classList.toggle('active', state.repeat !== 'off');
 
-    // Progress seeking (NP)
+    // Progress seeking (NP) — disabled in room for everyone (no scrub spam on realtime)
     $('#np-progress-bar')?.addEventListener('click', (e) => {
+      if (!canScrubTimeline()) return;
       const rect = e.currentTarget.getBoundingClientRect();
       if (audio.duration) {
         audio.currentTime = ((e.clientX - rect.left) / rect.width) * audio.duration;
@@ -1681,6 +2332,7 @@
 
     // Progress seeking (PB)
     $('#pb-progress')?.addEventListener('click', (e) => {
+      if (!canScrubTimeline()) return;
       const rect = e.currentTarget.getBoundingClientRect();
       if (audio.duration) {
         audio.currentTime = ((e.clientX - rect.left) / rect.width) * audio.duration;
@@ -1689,6 +2341,25 @@
     });
 
     // Audio events
+    audio.addEventListener('play', () => {
+      state.isPlaying = true;
+      updatePlayBtns(true);
+      // Bật visualizer khi vừa bắt đầu play (kể cả khi init trước đó lúc đang pause).
+      window.__miguVisualizer?.start?.();
+      setupParticles();
+      // Start watchdog only when actually playing.
+      startPlaybackWatchdogTimer?.();
+    });
+    audio.addEventListener('pause', () => {
+      // Ignore transient pause when source is being switched.
+      if (!audio.src) return;
+      state.isPlaying = false;
+      updatePlayBtns(false);
+      window.__miguVisualizer?.stop?.();
+      stopPlaybackWatchdogTimer?.();
+      setupParticles();
+    });
+
     audio.addEventListener('timeupdate', () => {
       if (!audio.duration) return;
       watchdogPrevTime = audio.currentTime;
@@ -1703,15 +2374,8 @@
       $('#np-duration').textContent = fmtDur(audio.duration);
       $('#pb-time').textContent = `${fmtDur(audio.currentTime)} / ${fmtDur(audio.duration)}`;
 
-      const mixSec = getActiveMixSeconds();
-      if (mixSec > 0 && !mixTransitionActive) {
-        const remaining = Number(audio.duration - audio.currentTime);
-        // Trigger earlier than configured duration to avoid "end first, then switch" feel.
-        const triggerWindow = mixSec + 1.25;
-        if (remaining <= triggerWindow && remaining > 0.2) {
-          startSimpleMixTransition();
-        }
-      }
+      const remSec = Number(audio.duration - audio.currentTime);
+      if (remSec <= 55 && remSec > 5) tryPrefetchNextTrackUrl();
     });
 
     audio.addEventListener('ended', () => {
@@ -1740,52 +2404,86 @@
       }
     });
 
+    audio.addEventListener('waiting', () => {
+      if (!state.isPlaying || !audio.duration) return;
+      const rem = audio.duration - audio.currentTime;
+      if (rem < 50 && rem > 2) tryPrefetchNextTrackUrl();
+    });
+
     // Failsafe: some streams stall near end and never emit "ended"
-    if (playbackWatchdogTimer) clearInterval(playbackWatchdogTimer);
-    playbackWatchdogTimer = setInterval(() => {
-      if (!state.isPlaying || !audio.src) return;
-      const dur = Number(audio.duration || 0);
-      if (!Number.isFinite(dur) || dur <= 0) return;
+    // Reduce CPU: chỉ chạy watchdog khi đang play thật.
+    function startPlaybackWatchdogTimer() {
+      if (playbackWatchdogTimer) return;
+      playbackWatchdogTimer = setInterval(() => {
+        if (!state.isPlaying || !audio.src) return;
+        const dur = Number(audio.duration || 0);
+        if (!Number.isFinite(dur) || dur <= 0) return;
 
-      const cur = Number(audio.currentTime || 0);
-      const remaining = dur - cur;
-      const progressed = Math.abs(cur - watchdogPrevTime) > 0.02;
+        const cur = Number(audio.currentTime || 0);
+        const remaining = dur - cur;
+        const progressed = Math.abs(cur - watchdogPrevTime) > 0.02;
 
-      if (progressed) {
-        watchdogStallMs = 0;
-        watchdogPrevTime = cur;
-        return;
-      }
-
-      watchdogStallMs += 1000;
-
-      // Mid-song stall recovery: refresh stream and resume from stuck timestamp
-      if (remaining > 2.2 && watchdogStallMs >= 8000) {
-        if (stallRecoverAttempts < 2 && state.currentSongInfo?.videoId) {
-          stallRecoverAttempts++;
-          const resumeAt = Math.max(0, cur - 0.3);
-          pendingResumeTime = resumeAt;
-          const vid = encodeURIComponent(state.currentSongInfo.videoId);
-          audio.src = `/api/stream/${vid}?recover=${Date.now()}&r=${stallRecoverAttempts}`;
-          audio.load();
-          audio.play().then(() => {
-            state.isPlaying = true;
-            updatePlayBtns(true);
-          }).catch(() => { });
+        if (progressed) {
           watchdogStallMs = 0;
+          watchdogPrevTime = cur;
           return;
         }
 
-        // Recovery exhausted -> skip to avoid permanent freeze
-        handleTrackEnded(true);
-        return;
-      }
+        watchdogStallMs += 1000;
 
-      // If the stream freezes anywhere in the last 10 seconds, force next track.
-      if (remaining <= 10 && watchdogStallMs >= 3500) {
-        handleTrackEnded(true);
-      }
-    }, 1000);
+        // Mid-song stall recovery: refresh stream and resume from stuck timestamp
+        if (remaining > 2.2 && watchdogStallMs >= 4500) {
+          if (stallRecoverAttempts < 2 && state.currentSongInfo?.videoId) {
+            stallRecoverAttempts++;
+            const resumeAt = Math.max(0, cur - 0.3);
+            pendingResumeTime = resumeAt;
+            const vid = encodeURIComponent(state.currentSongInfo.videoId);
+            audio.src = `/api/stream/${vid}?recover=${Date.now()}&r=${stallRecoverAttempts}`;
+            audio.load();
+            audio.play().then(() => {
+              state.isPlaying = true;
+              updatePlayBtns(true);
+            }).catch(() => { });
+            watchdogStallMs = 0;
+            return;
+          }
+
+          // Recovery exhausted -> skip to avoid permanent freeze
+          handleTrackEnded(true);
+          return;
+        }
+
+        // Near end: nhẹ nhàng nudge timeline — decoder/buffer đôi khi bị kẹt vài giây
+        if (
+          remaining <= 20 &&
+          remaining > 0.06 &&
+          watchdogStallMs >= 600 &&
+          endStallNudgeCount < 10
+        ) {
+          endStallNudgeCount++;
+          try {
+            audio.currentTime = Math.min(cur + 0.12, dur - 0.03);
+          } catch (_) { /* ignore */ }
+          watchdogStallMs = 0;
+          watchdogPrevTime = Number(audio.currentTime || 0);
+          return;
+        }
+
+        // Chỉ ép chuyển bài khi đứng thật lâu (buffer cuối có thể mất >3s)
+        if (remaining <= 20 && watchdogStallMs >= 3500) {
+          handleTrackEnded(true);
+        }
+      }, 1000);
+    }
+
+    function stopPlaybackWatchdogTimer() {
+      if (!playbackWatchdogTimer) return;
+      clearInterval(playbackWatchdogTimer);
+      playbackWatchdogTimer = null;
+    }
+
+    // Start immediately only if we are already playing.
+    if (state.isPlaying && audio.src) startPlaybackWatchdogTimer();
 
     // Favorite buttons
     $('#np-toggle-fav')?.addEventListener('click', () => {
@@ -1806,38 +2504,71 @@
 
     // Queue clear
     $('#btn-clear-queue')?.addEventListener('click', () => {
-      const cur = state.queue[state.currentIndex];
-      state.queue = cur ? [cur] : [];
-      state.currentIndex = cur ? 0 : -1;
-      renderQueue();
-      if (roomCode) renderRoomQueue();
-      saveState();
-      toast('Đã xóa hàng chờ', 'info');
-      emitRoomState({ queue: state.queue });
+      const isRoomTab = roomCode && state.activeQueueTab === 'room';
+      if (isRoomTab) {
+        const cur = state.roomQueue[state.currentIndex];
+        state.roomQueue = cur ? [cur] : [];
+        state.currentIndex = cur ? 0 : -1;
+        renderRoomQueue();
+        renderQueue();
+        saveState();
+        toast('Đã xóa hàng chờ phòng', 'info');
+        emitRoomState({ queue: state.roomQueue });
+      } else {
+        const cur = state.queue[state.currentIndex];
+        state.queue = cur ? [cur] : [];
+        state.currentIndex = cur ? 0 : -1;
+        renderQueue();
+        if (roomCode) renderRoomQueue();
+        saveState();
+        toast('Đã xóa hàng chờ', 'info');
+      }
     });
   }
 
-  function nextTrack() {
-    if (state.queue.length === 0) return;
+  async function nextTrack() {
+    const q = getActivePlaybackQueue();
+    if (q.length === 0) return;
     if (state.shuffle) {
-      let n; do { n = Math.floor(Math.random() * state.queue.length); } while (n === state.currentIndex && state.queue.length > 1);
+      let n; do { n = Math.floor(Math.random() * q.length); } while (n === state.currentIndex && q.length > 1);
       state.currentIndex = n;
     } else {
       state.currentIndex++;
-      if (state.currentIndex >= state.queue.length) {
+      if (state.currentIndex >= q.length) {
         if (state.repeat === 'all') state.currentIndex = 0;
-        else { state.currentIndex = state.queue.length - 1; state.isPlaying = false; updatePlayBtns(false); return; }
+        else {
+          state.currentIndex = q.length - 1;
+          const shouldAutoplayFromMixed =
+            canAutoplayFromSuggestions() &&
+            !(roomCode && isRoomHost);
+          const suggestSong = shouldAutoplayFromMixed
+            ? await getAutoplayMixedSuggestionSong()
+            : null;
+          if (suggestSong) {
+            const targetQ = roomCode && isRoomHost ? state.roomQueue : state.queue;
+            if (!targetQ.some((s) => s && s.videoId === suggestSong.videoId)) {
+              targetQ.push(suggestSong);
+            }
+            state.currentIndex = targetQ.length - 1;
+            playSong(suggestSong, false);
+            return;
+          }
+          state.isPlaying = false;
+          updatePlayBtns(false);
+          return;
+        }
       }
     }
-    const song = state.queue[state.currentIndex];
+    const song = q[state.currentIndex];
     if (song) playSong(song, false);
   }
 
   function prevTrack() {
     if (audio.currentTime > 3) { audio.currentTime = 0; return; }
-    if (state.queue.length === 0) return;
+    const q = getActivePlaybackQueue();
+    if (q.length === 0) return;
     state.currentIndex = Math.max(0, state.currentIndex - 1);
-    const song = state.queue[state.currentIndex];
+    const song = q[state.currentIndex];
     if (song) playSong(song, false);
   }
 
@@ -1871,6 +2602,10 @@
     const targetQ = roomCode ? state.roomQueue : state.queue;
     if (!targetQ.some(q => q.videoId === song.videoId)) {
       targetQ.push(song);
+      if (targetQ.length > MAX_QUEUE_ITEMS) {
+        targetQ.splice(0, targetQ.length - MAX_QUEUE_ITEMS);
+        state.currentIndex = Math.max(-1, state.currentIndex - 1);
+      }
       renderQueue();
       if (roomCode) renderRoomQueue();
       saveState();
@@ -1899,7 +2634,11 @@
       return;
     }
 
-    list.innerHTML = q.map((song, i) => `
+    const entries = isSuperMode()
+      ? getWindowedEntries(q, state.currentIndex, SUPER_QUEUE_RENDER_LIMIT)
+      : q.map((item, index) => ({ item, index }));
+
+    list.innerHTML = entries.map(({ item: song, index: i }) => `
       <div class="queue-item ${state.currentSongInfo && song.videoId === state.currentSongInfo.videoId ? 'active' : ''}" data-index="${i}">
         <span class="queue-item-index">${(state.currentSongInfo && song.videoId === state.currentSongInfo.videoId) ? '▶' : (i + 1)}</span>
         <img class="queue-item-thumb" src="${song.thumbnail}" alt="" loading="lazy">
@@ -1913,38 +2652,11 @@
       </div>
     `).join('');
 
-    list.querySelectorAll('.queue-item').forEach(item => {
-      item.addEventListener('click', async (e) => {
-        if (e.target.closest('.queue-item-remove')) return;
-        const idx = parseInt(item.dataset.index);
-        
-        if (isRoom) {
-          if (isRoomHost) playSong(state.roomQueue[idx], false);
-          else toast('Chỉ Host mới có quyền chọn bài phát trực tiếp', 'info');
-        } else {
-          if (roomCode && isSyncActive()) {
-            const agreed = await showConfirmModal({
-              title: 'Rời chế độ nghe chung?',
-              message: 'Bạn sẽ chuyển sang phát danh sách cá nhân.',
-              confirmText: 'Tiếp tục',
-              cancelText: 'Ở lại phòng'
-            });
-            if (agreed) {
-              window.userSyncChoice = 'start'; // "start" mode = unsynced local
-              playSong(state.queue[idx], false);
-            }
-          } else {
-            state.currentIndex = idx;
-            playSong(state.queue[idx], false);
-          }
-        }
-      });
-    });
-
-    list.querySelectorAll('.queue-item-remove').forEach(btn => {
-      btn.addEventListener('click', (e) => {
+    list.onclick = async (e) => {
+      const removeBtn = e.target.closest('.queue-item-remove');
+      if (removeBtn) {
         e.stopPropagation();
-        const idx = parseInt(btn.dataset.index);
+        const idx = parseInt(removeBtn.dataset.index, 10);
         if (isRoom) {
           state.roomQueue.splice(idx, 1);
           emitRoomState({ queue: state.roomQueue });
@@ -1958,8 +2670,34 @@
         }
         renderQueue();
         saveState();
-      });
-    });
+        return;
+      }
+
+      const item = e.target.closest('.queue-item');
+      if (!item) return;
+      const idx = parseInt(item.dataset.index, 10);
+
+      if (isRoom) {
+        if (isRoomHost) playSong(state.roomQueue[idx], false);
+        else toast('Chỉ Host mới có quyền chọn bài phát trực tiếp', 'info');
+      } else {
+        if (roomCode && isSyncActive()) {
+          const agreed = await showConfirmModal({
+            title: 'Rời chế độ nghe chung?',
+            message: 'Bạn sẽ chuyển sang phát danh sách cá nhân.',
+            confirmText: 'Tiếp tục',
+            cancelText: 'Ở lại phòng'
+          });
+          if (agreed) {
+            window.userSyncChoice = 'start'; // "start" mode = unsynced local
+            playSong(state.queue[idx], false);
+          }
+        } else {
+          state.currentIndex = idx;
+          playSong(state.queue[idx], false);
+        }
+      }
+    };
 
     const active = list.querySelector('.queue-item.active');
     if (active) active.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -1993,7 +2731,10 @@
       return;
     }
 
-    list.innerHTML = state.favorites.map(item => renderResultItem(item)).join('');
+    const rows = isSuperMode()
+      ? state.favorites.slice(0, SUPER_FAVORITES_RENDER_LIMIT)
+      : state.favorites;
+    list.innerHTML = rows.map(item => renderResultItem(item)).join('');
     bindResultActions(list);
   }
 
@@ -2089,7 +2830,6 @@
       row.querySelector('[data-action="add"]')?.addEventListener('click', (e) => {
         e.stopPropagation();
         addToQueue(song);
-        toast('Đã thêm vào hàng chờ', 'success');
       });
       row.querySelector('[data-action="remove"]')?.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -2126,32 +2866,253 @@
     });
   }
 
+  function canAutoplayFromSuggestions() {
+    if (isSuperMode()) return false;
+    if (roomCode && isSyncActive() && !isRoomHost) return false;
+    return true;
+  }
+
+  /** Bài gợi ý đầu tiên (khác bài hiện tại) để nối khi hết queue */
+  function getAutoplaySuggestionSong() {
+    const curId = state.currentSongInfo?.videoId;
+    const list = state.lastRecommendationVideos || [];
+    for (const v of list) {
+      if (!v?.videoId || v.videoId === curId) continue;
+      return {
+        videoId: v.videoId,
+        title: v.title || '',
+        author: v.author || '',
+        thumbnail: v.thumbnail || '',
+        duration: Number(v.duration) || 0,
+      };
+    }
+    return null;
+  }
+
+  /** Luon lay bai dau tien tu tab "Da dang" de autoplay khi het queue ca nhan. */
+  async function getAutoplayMixedSuggestionSong() {
+    const curId = state.currentSongInfo?.videoId;
+    if (!curId) return null;
+
+    if (state.activeSuggestTab === 'mixed') {
+      const cached = getAutoplaySuggestionSong();
+      if (cached) return cached;
+    }
+
+    try {
+      const res = await fetch(`/api/info/${encodeURIComponent(curId)}?suggest=mixed`);
+      const data = await res.json();
+      const recs = Array.isArray(data?.recommendedVideos) ? data.recommendedVideos : [];
+      for (const v of recs) {
+        if (!v?.videoId || v.videoId === curId) continue;
+        return {
+          videoId: v.videoId,
+          title: v.title || '',
+          author: v.author || '',
+          thumbnail: v.thumbnail || '',
+          duration: Number(v.duration) || 0,
+        };
+      }
+    } catch (_) {
+      // Ignore and let player stop normally when suggestions are unavailable.
+    }
+
+    return null;
+  }
+
+  function fmtSuggestViews(n) {
+    const x = Number(n);
+    if (!x || x < 1) return '';
+    if (x >= 1e6) return `${(x / 1e6).toFixed(1).replace(/\.0$/, '')} Tr xem`;
+    if (x >= 1e3) return `${Math.round(x / 1e3)} N xem`;
+    return `${x} xem`;
+  }
+
+  function syncSuggestTabUi() {
+    const wrap = $('#suggest-tabs');
+    if (!wrap) return;
+    wrap.querySelectorAll('.suggest-tab').forEach((b) => {
+      const on = (b.dataset.suggestTab || 'mixed') === state.activeSuggestTab;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+  }
+
+  function setupSuggestTabs() {
+    const wrap = $('#suggest-tabs');
+    if (!wrap) return;
+    wrap.querySelectorAll('.suggest-tab').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const t = btn.dataset.suggestTab || 'mixed';
+        const vid = state.currentSongInfo?.videoId;
+        if (!vid) return;
+        if (state.activeSuggestTab === t) return;
+        loadRecommendations(vid, t);
+      });
+    });
+  }
+
+  /** Kéo thanh giữa hàng chờ / gợi ý để chỉnh tỷ lệ (lưu localStorage). */
+  function setupNpPanelSplitter() {
+    const right = document.querySelector('.np-right');
+    const split = document.getElementById('np-panel-splitter');
+    if (!right || !split) return;
+
+    const FR_TOTAL = 2;
+    const clampFr = (x) => Math.max(0.55, Math.min(1.55, x));
+
+    let npQueueFr = 1;
+    try {
+      const raw = localStorage.getItem('np_queue_fr');
+      if (raw != null) {
+        const n = parseFloat(raw, 10);
+        if (!Number.isNaN(n)) npQueueFr = clampFr(n);
+      }
+    } catch (e) {
+      /* ignore */
+    }
+
+    function applyNpGrid() {
+      const q = clampFr(npQueueFr);
+      npQueueFr = q;
+      const s = FR_TOTAL - q;
+      right.style.gridTemplateRows = `minmax(72px, ${q}fr) 5px minmax(96px, ${s}fr)`;
+    }
+    applyNpGrid();
+
+    let dragging = false;
+    let startY = 0;
+    let startFr = 1;
+
+    function onStart(clientY) {
+      dragging = true;
+      startY = clientY;
+      startFr = npQueueFr;
+      document.body.style.cursor = 'row-resize';
+      document.body.style.userSelect = 'none';
+    }
+    function onMove(clientY) {
+      if (!dragging) return;
+      const h = right.getBoundingClientRect().height || 1;
+      const dy = clientY - startY;
+      npQueueFr = clampFr(startFr + (dy / h) * 1.35);
+      applyNpGrid();
+    }
+    function onEnd() {
+      if (!dragging) return;
+      dragging = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      try {
+        localStorage.setItem('np_queue_fr', String(npQueueFr));
+      } catch (e) {
+        /* ignore */
+      }
+    }
+
+    split.setAttribute('tabindex', '0');
+    split.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      onStart(e.clientY);
+    });
+    document.addEventListener('mousemove', (e) => onMove(e.clientY));
+    document.addEventListener('mouseup', onEnd);
+
+    split.addEventListener(
+      'touchstart',
+      (e) => {
+        if (e.touches.length !== 1) return;
+        e.preventDefault();
+        onStart(e.touches[0].clientY);
+      },
+      { passive: false }
+    );
+    document.addEventListener(
+      'touchmove',
+      (e) => {
+        if (!dragging || !e.touches[0]) return;
+        e.preventDefault();
+        onMove(e.touches[0].clientY);
+      },
+      { passive: false }
+    );
+    document.addEventListener('touchend', onEnd);
+
+    split.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        const step = e.key === 'ArrowDown' ? 0.04 : -0.04;
+        npQueueFr = clampFr(npQueueFr + step);
+        applyNpGrid();
+        try {
+          localStorage.setItem('np_queue_fr', String(npQueueFr));
+        } catch (err) {
+          /* ignore */
+        }
+      }
+    });
+  }
+
   // ── Recommendations ───────────────────────────────────────────
-  async function loadRecommendations(videoId) {
+  async function loadRecommendations(videoId, suggestTab) {
     const container = $('#suggest-container');
+    const tabsWrap = $('#suggest-tabs');
+    const hintEl = $('#suggest-type-hint');
     if (!container) return;
     if (isSuperMode()) {
+      state.lastRecommendationVideos = [];
+      if (tabsWrap) tabsWrap.style.display = 'none';
+      if (hintEl) { hintEl.hidden = true; hintEl.textContent = ''; }
       container.innerHTML = '<div class="empty-state small"><p>Super mode: tắt gợi ý để tiết kiệm hiệu năng</p></div>';
       return;
     }
+    if (tabsWrap) tabsWrap.style.display = '';
+    if (suggestTab === undefined || suggestTab === null) {
+      state.activeSuggestTab = 'mixed';
+    } else {
+      state.activeSuggestTab = suggestTab;
+    }
+    syncSuggestTabUi();
     container.innerHTML = '<div class="loading-spinner"><div class="spinner"></div></div>';
 
     try {
-      const res = await fetch(`/api/info/${videoId}`);
+      const tab = encodeURIComponent(state.activeSuggestTab || 'mixed');
+      const res = await fetch(`/api/info/${encodeURIComponent(videoId)}?suggest=${tab}`);
       const data = await res.json();
-      const recs = data.recommendedVideos || [];
+      const blocked = new Set((state.dismissedSuggestionIds || []).map((x) => String(x)));
+      const recs = (Array.isArray(data.recommendedVideos) ? data.recommendedVideos : [])
+        .filter((v) => v && v.videoId && v.videoId !== videoId && !blocked.has(String(v.videoId)));
+      state.lastRecommendationVideos = recs;
+
+      if (hintEl) {
+        const meta = data.suggestMeta;
+        if (state.activeSuggestTab === 'related' || !meta?.typeLabel) {
+          hintEl.hidden = true;
+          hintEl.textContent = '';
+        } else {
+          const countryLabel = String(meta?.countryLabel || '').trim();
+          hintEl.textContent = countryLabel
+            ? `Nhận diện: ${meta.typeLabel} • ${countryLabel}`
+            : `Nhận diện: ${meta.typeLabel}`;
+          hintEl.hidden = false;
+        }
+      }
 
       if (recs.length === 0) {
         container.innerHTML = '<div class="empty-state small"><p>Không có gợi ý</p></div>';
         return;
       }
 
-      container.innerHTML = recs.map(v => `
+      container.innerHTML = recs.map((v) => {
+        const extra = [v.published || '', fmtSuggestViews(v.viewCount)].filter(Boolean).join(' · ');
+        return `
         <div class="suggest-item" data-id="${v.videoId}">
           <img class="suggest-thumb" src="${v.thumbnail}" alt="" loading="lazy">
           <div class="suggest-info">
             <div class="suggest-title">${esc(v.title)}</div>
             <div class="suggest-artist">${esc(v.author)}</div>
+            ${extra ? `<div class="suggest-extra">${esc(extra)}</div>` : ''}
           </div>
           <div class="suggest-actions">
             <button class="suggest-action-btn play" title="Phát" data-action="play">
@@ -2160,43 +3121,340 @@
             <button class="suggest-action-btn add" title="Thêm vào hàng chờ" data-action="add">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             </button>
+            <button class="suggest-action-btn remove" title="Ẩn gợi ý này" data-action="remove">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
           </div>
-        </div>
-      `).join('');
+        </div>`;
+      }).join('');
 
-      container.querySelectorAll('.suggest-item').forEach(item => {
-        const song = { videoId: item.dataset.id, title: item.querySelector('.suggest-title').textContent, author: item.querySelector('.suggest-artist').textContent, thumbnail: item.querySelector('.suggest-thumb').src, duration: 0 };
+      container.querySelectorAll('.suggest-item').forEach((item) => {
+        const song = {
+          videoId: item.dataset.id,
+          title: item.querySelector('.suggest-title').textContent,
+          author: item.querySelector('.suggest-artist').textContent,
+          thumbnail: item.querySelector('.suggest-thumb').src,
+          duration: 0,
+        };
         item.querySelector('[data-action="play"]')?.addEventListener('click', (e) => { e.stopPropagation(); playSong(song); });
-        item.querySelector('[data-action="add"]')?.addEventListener('click', (e) => { e.stopPropagation(); addToQueue(song); toast('Đã thêm vào hàng chờ', 'success'); });
+        item.querySelector('[data-action="add"]')?.addEventListener('click', (e) => { e.stopPropagation(); addToQueue(song); });
+        item.querySelector('[data-action="remove"]')?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const vid = String(song.videoId || '');
+          if (!vid) return;
+          if (!state.dismissedSuggestionIds.includes(vid)) {
+            state.dismissedSuggestionIds.push(vid);
+            if (state.dismissedSuggestionIds.length > MAX_DISMISSED_SUGGESTIONS) {
+              state.dismissedSuggestionIds = state.dismissedSuggestionIds.slice(-MAX_DISMISSED_SUGGESTIONS);
+            }
+          }
+          state.lastRecommendationVideos = (state.lastRecommendationVideos || []).filter((x) => x && x.videoId !== vid);
+          item.remove();
+          if (!container.querySelector('.suggest-item')) {
+            container.innerHTML = '<div class="empty-state small"><p>Không còn gợi ý nào (bạn đã ẩn hết)</p></div>';
+          }
+          saveState();
+          toast('Đã ẩn bài khỏi gợi ý', 'info');
+        });
         item.addEventListener('click', () => playSong(song));
       });
     } catch (err) {
+      state.lastRecommendationVideos = [];
+      if (hintEl) { hintEl.hidden = true; hintEl.textContent = ''; }
       container.innerHTML = '<div class="empty-state small"><p>Không tải được gợi ý</p></div>';
     }
   }
 
   // ── Trending ──────────────────────────────────────────────────
-  async function loadTrending() {
+  function setupTrendingTabs() {
+    const wrap = $('#trending-tabs');
+    if (!wrap) return;
+    wrap.querySelectorAll('.trending-tab').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const cat = btn.dataset.category || 'all';
+        if (state.trendingCategory === cat) return;
+        state.trendingCategory = cat;
+        wrap.querySelectorAll('.trending-tab').forEach((b) => {
+          const on = b === btn;
+          b.classList.toggle('active', on);
+          b.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+        loadTrending({ preferCache: true });
+      });
+    });
+  }
+
+  function renderTrendingRows(rows) {
     const container = $('#trending-container');
-    container.innerHTML = '<div class="loading-spinner" style="grid-column: 1 / -1; padding: 80px 0;"><div class="spinner"></div></div>';
-    try {
-      const res = await fetch('/api/trending');
-      const data = await res.json();
-
-      if (!data.results || data.results.length === 0) {
-        container.innerHTML = '<div class="empty-state small"><p>Không tải được nhạc thịnh hành</p></div>';
-        return;
-      }
-
-      const rows = isSuperMode() ? data.results.slice(0, 8) : data.results;
-      container.innerHTML = rows.map(song => renderSongCard(song)).join('');
-      bindSongCards(container);
-    } catch (err) {
+    if (!container) return;
+    if (!rows || rows.length === 0) {
       container.innerHTML = '<div class="empty-state small"><p>Không tải được nhạc thịnh hành</p></div>';
+      return;
+    }
+    const visibleRows = isSuperMode() ? rows.slice(0, SUPER_TRENDING_RENDER_LIMIT) : rows;
+    container.innerHTML = visibleRows.map(song => renderSongCard(song)).join('');
+    bindSongCards(container);
+  }
+
+  async function loadTrending(options = {}) {
+    const { preferCache = false, force = false } = options;
+    const container = $('#trending-container');
+    if (!container) return;
+    const cat = state.trendingCategory || 'all';
+    const cacheRow = homeTrendingCache.get(cat);
+
+    if (!force && preferCache && isFreshHomeCache(cacheRow)) {
+      renderTrendingRows(cacheRow.rows || []);
+      return;
+    }
+
+    if (!force && homeTrendingInFlight.has(cat)) {
+      if (!preferCache) {
+        container.innerHTML = '<div class="loading-spinner" style="grid-column: 1 / -1; padding: 80px 0;"><div class="spinner"></div></div>';
+      }
+      await homeTrendingInFlight.get(cat);
+      return;
+    }
+
+    if (!preferCache || !cacheRow) {
+      container.innerHTML = '<div class="loading-spinner" style="grid-column: 1 / -1; padding: 80px 0;"><div class="spinner"></div></div>';
+    } else {
+      renderTrendingRows(cacheRow.rows || []);
+    }
+
+    const request = (async () => {
+      try {
+        const url = cat === 'all' ? '/api/trending' : `/api/trending?category=${encodeURIComponent(cat)}`;
+        const res = await fetch(url);
+        const data = await res.json();
+
+        const rows = Array.isArray(data.results) ? data.results : [];
+        if (rows.length === 0) {
+          if (!cacheRow) container.innerHTML = '<div class="empty-state small"><p>Không tải được nhạc thịnh hành</p></div>';
+          return;
+        }
+
+        homeTrendingCache.set(cat, { rows, t: Date.now() });
+        renderTrendingRows(rows);
+      } catch (err) {
+        if (!cacheRow) container.innerHTML = '<div class="empty-state small"><p>Không tải được nhạc thịnh hành</p></div>';
+      } finally {
+        homeTrendingInFlight.delete(cat);
+      }
+    })();
+    homeTrendingInFlight.set(cat, request);
+
+    try {
+      await request;
+    } catch (_) { /* handled in request */ }
+  }
+
+  function setupCommunityChartPlayAll() {
+    const btn = $('#btn-play-community-chart');
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      const list = state.communityChartSongs || [];
+      if (list.length === 0) return;
+      state.queue = list.map((t) => ({
+        videoId: t.videoId,
+        title: t.title,
+        author: t.author,
+        thumbnail: t.thumbnail,
+        duration: t.duration || 0,
+      }));
+      state.currentIndex = 0;
+      playSong(state.queue[0], false);
+      toast('Đang phát Top nghe nhiều', 'success');
+    });
+  }
+
+  async function reportPlayComplete(song) {
+    if (!song || !song.videoId) return;
+    if (!initSupabaseClient()) return;
+    try {
+      const { error } = await supabase.rpc('increment_song_play', {
+        p_video_id: String(song.videoId).slice(0, 32),
+        p_title: String(song.title || '').slice(0, 500),
+        p_author: String(song.author || '').slice(0, 300),
+      });
+      if (error) console.warn('[MiGu] increment_song_play:', error.message);
+      else {
+        // DB đã tăng play_count -> bỏ cache cũ để tránh "đếm không lên" trên Home.
+        homeCommunityCache = null;
+        if (state.currentView === 'home') loadCommunityChart({ force: true });
+      }
+    } catch (e) {
+      console.warn('[MiGu] reportPlayComplete', e);
     }
   }
 
-  async function loadPersonalizedRecommendations() {
+  function rankBadgeClass(rank) {
+    if (rank === 1) return 'song-card-rank song-card-rank--gold';
+    if (rank === 2) return 'song-card-rank song-card-rank--silver';
+    if (rank === 3) return 'song-card-rank song-card-rank--bronze';
+    return 'song-card-rank';
+  }
+
+  function renderChartSongCard(song) {
+    const rk = rankBadgeClass(song.rank);
+    return `
+      <div class="song-card song-card--chart" data-id="${song.videoId}">
+        <span class="${rk}">${song.rank}</span>
+        <img class="song-card-thumb" src="${esc(song.thumbnail)}" alt="" loading="lazy">
+        <div class="song-card-overlay">
+          <div class="song-card-play">
+            <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+          </div>
+        </div>
+        <div class="song-card-info">
+          <div class="song-card-title">${esc(song.title)}</div>
+          <div class="song-card-artist">${esc(song.author)}</div>
+          <div class="song-card-chart-meta">${song.plays} lần nghe</div>
+        </div>
+      </div>`;
+  }
+
+  function renderCommunityChartRows(rows) {
+    const container = $('#community-chart-container');
+    const btn = $('#btn-play-community-chart');
+    if (!container) return;
+    const list = Array.isArray(rows) ? rows : [];
+
+    state.communityChartSongs = list.map((r) => ({
+      videoId: r.videoId,
+      title: r.title,
+      author: r.author,
+      thumbnail: r.thumbnail,
+      duration: 0,
+    }));
+
+    if (list.length === 0) {
+      container.innerHTML = `<div class="empty-state small" style="grid-column: 1 / -1;">
+        <p>Chưa có dữ liệu — phát <strong>hết</strong> một bài để +1 lên bảng</p>
+      </div>`;
+      if (btn) btn.style.display = 'none';
+      return;
+    }
+
+    if (btn) btn.style.display = '';
+    container.innerHTML = list.map((s) => renderChartSongCard(s)).join('');
+    bindCommunityChartCards(container);
+  }
+
+  async function loadCommunityChart(options = {}) {
+    const { preferCache = false, force = false } = options;
+    const container = $('#community-chart-container');
+    const btn = $('#btn-play-community-chart');
+    if (!container) return;
+
+    if (isSuperMode() && !force) {
+      container.innerHTML = '<div class="empty-state small" style="grid-column: 1 / -1;"><p>Super mode: ẩn Top nghe nhiều để tiết kiệm hiệu năng</p></div>';
+      if (btn) btn.style.display = 'none';
+      state.communityChartSongs = [];
+      return;
+    }
+
+    if (!force && preferCache && isFreshHomeCache(homeCommunityCache)) {
+      renderCommunityChartRows(homeCommunityCache.rows || []);
+      return;
+    }
+
+    if (!force && homeCommunityInFlight) {
+      if (!preferCache) {
+        container.innerHTML = '<div class="loading-spinner" style="grid-column: 1 / -1; padding: 30px 0;"><div class="spinner"></div></div>';
+      }
+      await homeCommunityInFlight;
+      return;
+    }
+
+    if (!initSupabaseClient()) {
+      container.innerHTML = `<div class="empty-state small" style="grid-column: 1 / -1;">
+        <p>Chưa tải được Supabase (thiếu SDK hoặc mạng)</p>
+      </div>`;
+      if (btn) btn.style.display = 'none';
+      state.communityChartSongs = [];
+      return;
+    }
+
+    const limit = isSuperMode() ? 8 : 10;
+    if (!preferCache || !homeCommunityCache) {
+      container.innerHTML = '<div class="loading-spinner" style="grid-column: 1 / -1; padding: 30px 0;"><div class="spinner"></div></div>';
+    } else {
+      renderCommunityChartRows(homeCommunityCache.rows || []);
+    }
+
+    homeCommunityInFlight = (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('song_play_stats')
+          .select('video_id,title,author,play_count')
+          .order('play_count', { ascending: false })
+          .limit(limit);
+
+        if (error) {
+          console.warn('[MiGu] loadCommunityChart:', error.message);
+          if (!homeCommunityCache) {
+            container.innerHTML = `<div class="empty-state small" style="grid-column: 1 / -1;">
+              <p>Không tải được BXH — kiểm tra bảng <code>song_play_stats</code> và policy (xem <code>supabase/migrations</code>).</p>
+            </div>`;
+            if (btn) btn.style.display = 'none';
+            state.communityChartSongs = [];
+          }
+          return;
+        }
+
+        const rows = (data || []).map((row, i) => ({
+          videoId: row.video_id,
+          title: row.title || 'Không có tiêu đề',
+          author: row.author || '',
+          thumbnail: `https://i.ytimg.com/vi/${row.video_id}/mqdefault.jpg`,
+          duration: 0,
+          plays: Number(row.play_count) || 0,
+          rank: i + 1,
+        }));
+
+        homeCommunityCache = { rows, t: Date.now() };
+        renderCommunityChartRows(rows);
+      } finally {
+        homeCommunityInFlight = null;
+      }
+    })();
+
+    await homeCommunityInFlight;
+  }
+
+  function renderPersonalizedRows(rows) {
+    const container = $('#recommended-container');
+    if (!container) return;
+    const results = Array.isArray(rows) ? rows : [];
+    if (results.length === 0) {
+      container.innerHTML = `<div class="empty-state small" style="grid-column: 1 / -1;">
+        <p>Chưa đủ dữ liệu để đề xuất</p>
+      </div>`;
+      return;
+    }
+
+    container.innerHTML = results.map(song => `
+      <div class="song-card" data-id="${song.videoId}" data-reason="${esc(song.reason || '')}">
+        <img class="song-card-thumb" src="${song.thumbnail}" alt="" loading="lazy">
+        <div class="song-card-overlay">
+          <div class="song-card-play">
+            <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+          </div>
+        </div>
+        <span class="song-card-duration">${fmtDur(song.duration)}</span>
+        <div class="song-card-info">
+          <div class="song-card-title">${esc(song.title)}</div>
+          <div class="song-card-artist">${esc(song.author)}</div>
+          <div class="song-card-artist" style="color: var(--accent); font-size: 11px;">${esc(song.reason || 'Đề xuất cho bạn')}</div>
+        </div>
+      </div>
+    `).join('');
+    bindSongCards(container);
+  }
+
+  async function loadPersonalizedRecommendations(options = {}) {
+    const { preferCache = false, force = false } = options;
     const container = $('#recommended-container');
     if (!container) return;
     if (isSuperMode()) {
@@ -2204,6 +3462,7 @@
       return;
     }
     seedHistoryFromQueueIfNeeded();
+    const historySig = getHistorySignature();
 
     if (!state.listeningHistory || state.listeningHistory.length < 3) {
       container.innerHTML = `<div class="empty-state small" style="grid-column: 1 / -1;">
@@ -2212,45 +3471,54 @@
       return;
     }
 
-    container.innerHTML = '<div class="loading-spinner" style="grid-column: 1 / -1; padding: 30px 0;"><div class="spinner"></div></div>';
+    const canUseCache =
+      !force &&
+      preferCache &&
+      isFreshHomeCache(homePersonalizedCache) &&
+      homePersonalizedCache.sig === historySig;
 
-    try {
-      const res = await fetch('/api/recommend', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ history: state.listeningHistory.slice(-50) })
-      });
-      const data = await res.json();
-      const results = Array.isArray(data.results) ? data.results : [];
-      if (results.length === 0) {
-        container.innerHTML = `<div class="empty-state small" style="grid-column: 1 / -1;">
-          <p>Chưa đủ dữ liệu để đề xuất</p>
-        </div>`;
-        return;
-      }
-
-      container.innerHTML = results.map(song => `
-        <div class="song-card" data-id="${song.videoId}" data-reason="${esc(song.reason || '')}">
-          <img class="song-card-thumb" src="${song.thumbnail}" alt="" loading="lazy">
-          <div class="song-card-overlay">
-            <div class="song-card-play">
-              <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6 3 20 12 6 21 6 3"/></svg>
-            </div>
-          </div>
-          <span class="song-card-duration">${fmtDur(song.duration)}</span>
-          <div class="song-card-info">
-            <div class="song-card-title">${esc(song.title)}</div>
-            <div class="song-card-artist">${esc(song.author)}</div>
-            <div class="song-card-artist" style="color: var(--accent); font-size: 11px;">${esc(song.reason || 'Đề xuất cho bạn')}</div>
-          </div>
-        </div>
-      `).join('');
-      bindSongCards(container);
-    } catch (err) {
-      container.innerHTML = `<div class="empty-state small" style="grid-column: 1 / -1;">
-        <p>Không tải được gợi ý cá nhân</p>
-      </div>`;
+    if (canUseCache) {
+      renderPersonalizedRows(homePersonalizedCache.rows || []);
+      return;
     }
+
+    if (!force && homePersonalizedInFlight) {
+      if (!preferCache) {
+        container.innerHTML = '<div class="loading-spinner" style="grid-column: 1 / -1; padding: 30px 0;"><div class="spinner"></div></div>';
+      }
+      await homePersonalizedInFlight;
+      return;
+    }
+
+    if (!preferCache || !homePersonalizedCache || homePersonalizedCache.sig !== historySig) {
+      container.innerHTML = '<div class="loading-spinner" style="grid-column: 1 / -1; padding: 30px 0;"><div class="spinner"></div></div>';
+    } else {
+      renderPersonalizedRows(homePersonalizedCache.rows || []);
+    }
+
+    homePersonalizedInFlight = (async () => {
+      try {
+        const res = await fetch('/api/recommend', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ history: state.listeningHistory.slice(-50) })
+        });
+        const data = await res.json();
+        const results = Array.isArray(data.results) ? data.results : [];
+        homePersonalizedCache = { rows: results, t: Date.now(), sig: historySig };
+        renderPersonalizedRows(results);
+      } catch (err) {
+        if (!homePersonalizedCache || homePersonalizedCache.sig !== historySig) {
+          container.innerHTML = `<div class="empty-state small" style="grid-column: 1 / -1;">
+            <p>Không tải được gợi ý cá nhân</p>
+          </div>`;
+        }
+      } finally {
+        homePersonalizedInFlight = null;
+      }
+    })();
+
+    await homePersonalizedInFlight;
   }
 
   function renderSongCard(song) {
@@ -2270,19 +3538,38 @@
       </div>`;
   }
 
+  /** Top cộng đồng: trong phòng chỉ thêm hàng chờ phòng; ngoài phòng phát luôn. */
+  function bindCommunityChartCards(container) {
+    container.onclick = (e) => {
+      const card = e.target.closest('.song-card');
+      if (!card || !container.contains(card)) return;
+      const durEl = card.querySelector('.song-card-duration');
+      const song = {
+        videoId: card.dataset.id,
+        title: card.querySelector('.song-card-title')?.textContent || '',
+        author: card.querySelector('.song-card-artist')?.textContent || '',
+        thumbnail: card.querySelector('.song-card-thumb')?.src || '',
+        duration: durEl ? parseDur(durEl.textContent) : 0,
+      };
+      if (roomCode) addToQueue(song);
+      else playSong(song);
+    };
+  }
+
   function bindSongCards(container) {
-    container.querySelectorAll('.song-card').forEach(card => {
-      card.addEventListener('click', () => {
-        const song = {
-          videoId: card.dataset.id,
-          title: card.querySelector('.song-card-title').textContent,
-          author: card.querySelector('.song-card-artist').textContent,
-          thumbnail: card.querySelector('.song-card-thumb').src,
-          duration: parseDur(card.querySelector('.song-card-duration').textContent)
-        };
-        playSong(song);
-      });
-    });
+    container.onclick = (e) => {
+      const card = e.target.closest('.song-card');
+      if (!card || !container.contains(card)) return;
+      const durEl = card.querySelector('.song-card-duration');
+      const song = {
+        videoId: card.dataset.id,
+        title: card.querySelector('.song-card-title')?.textContent || '',
+        author: card.querySelector('.song-card-artist')?.textContent || '',
+        thumbnail: card.querySelector('.song-card-thumb')?.src || '',
+        duration: durEl ? parseDur(durEl.textContent) : 0,
+      };
+      playSong(song);
+    };
   }
 
   // ── Playlists / Library ───────────────────────────────────────
@@ -2352,7 +3639,7 @@
 
       content.innerHTML = `
         <h3>${esc(title)}</h3>
-        <p style="margin-top:8px;color:var(--text-secondary);line-height:1.5">${esc(message)}</p>
+        <p style="margin-top:8px;color:var(--text-secondary);line-height:1.6;white-space:pre-line">${esc(message)}</p>
         <div class="modal-actions" style="margin-top:16px;display:flex;justify-content:flex-end;gap:10px;">
           <button class="btn-text" id="confirm-cancel">${esc(cancelText)}</button>
           <button class="${danger ? 'btn-text' : 'btn-primary'}" id="confirm-ok"
@@ -2379,8 +3666,52 @@
     });
   }
 
+  let electronUpdaterUiWired = false;
+  function setupElectronUpdaterUI() {
+    if (!window.electronAPI?.onUpdateEvent || electronUpdaterUiWired) return;
+    electronUpdaterUiWired = true;
+    window.electronAPI.onUpdateEvent(async (ev) => {
+      if (!ev || !ev.type) return;
+      if (ev.type === 'dev-mode' && ev.message) {
+        toast(ev.message, 'info');
+        return;
+      }
+      if (ev.type === 'not-available' && ev.fromManual) {
+        const rv = ev.remoteVersion ? ` · Server: v${ev.remoteVersion}` : '';
+        toast(`Phiên bản trên máy: v${ev.version || '?'}${rv}`, 'success');
+        return;
+      }
+      if (ev.type === 'downloaded') {
+        const ok = await showConfirmModal({
+          title: 'MiGu Music — Cập nhật đã tải xong',
+          message: `MiGu Music v${ev.version || 'mới'} đã sẵn sàng. Khởi động lại để hoàn tất cài đặt?`,
+          confirmText: 'Khởi động lại',
+          cancelText: 'Để sau',
+        });
+        if (ok) window.electronAPI?.quitAndInstall?.();
+        return;
+      }
+      if (ev.type === 'error') {
+        await showConfirmModal({
+          title: 'MiGu Music — Lỗi cập nhật',
+          message: ev.message || 'Lỗi không xác định.',
+          confirmText: 'Đóng',
+          cancelText: 'Đóng',
+        });
+      }
+    });
+  }
+
   // ── Keyboard ──────────────────────────────────────────────────
   function setupKeyboardShortcuts() {
+    const shortcutsBtn = $('#btn-shortcuts-help');
+    if (shortcutsBtn) {
+      shortcutsBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        openShortcutsHelp();
+      });
+    }
+
     document.addEventListener('keydown', (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
       const isGuest = roomCode && !isRoomHost;
@@ -2392,15 +3723,43 @@
           $('#np-btn-play')?.click();
           break;
         case 'ArrowRight':
-          if (isGuest) return;
-          if (audio.duration) audio.currentTime = Math.min(audio.duration, audio.currentTime + 10);
+          if (e.ctrlKey || e.metaKey) {
+            if (isGuest) return;
+            e.preventDefault();
+            nextTrack();
+            return;
+          }
+          if (!canScrubTimeline()) return;
+          if (audio.duration) {
+            audio.currentTime = Math.min(audio.duration, audio.currentTime + 10);
+            if (roomCode && isRoomHost) emitRoomState({ currentTime: audio.currentTime });
+          }
           break;
         case 'ArrowLeft':
-          if (isGuest) return;
-          if (audio.duration) audio.currentTime = Math.max(0, audio.currentTime - 10);
+          if (e.ctrlKey || e.metaKey) {
+            if (isGuest) return;
+            e.preventDefault();
+            prevTrack();
+            return;
+          }
+          if (!canScrubTimeline()) return;
+          if (audio.duration) {
+            audio.currentTime = Math.max(0, audio.currentTime - 10);
+            if (roomCode && isRoomHost) emitRoomState({ currentTime: audio.currentTime });
+          }
           break;
-        case 'ArrowUp': e.preventDefault(); setVol(Math.min(100, state.volume + 5)); break;
-        case 'ArrowDown': e.preventDefault(); setVol(Math.max(0, state.volume - 5)); break;
+        case 'ArrowUp':
+          if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            setVol(Math.min(100, state.volume + 5));
+          }
+          break;
+        case 'ArrowDown':
+          if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            setVol(Math.max(0, state.volume - 5));
+          }
+          break;
         case 'n': case 'N':
           if (isGuest) return;
           nextTrack();
@@ -2408,6 +3767,32 @@
         case 'p': case 'P':
           if (isGuest) return;
           prevTrack();
+          break;
+        case 's': case 'S':
+          // Stop only for personal playback (outside room).
+          if (roomCode) return;
+          e.preventDefault();
+          stopPersonalPlayback();
+          break;
+        case 'm': case 'M':
+          e.preventDefault();
+          toggleMuteShortcut();
+          break;
+        case 'k': case 'K':
+          if (!(e.ctrlKey || e.metaKey)) return;
+          e.preventDefault();
+          switchView('search');
+          setTimeout(() => $('#search-input')?.focus(), 0);
+          break;
+        case 'Escape':
+          if (state.currentView === 'nowplaying') {
+            e.preventDefault();
+            switchView('home');
+          }
+          break;
+        case '?':
+          e.preventDefault();
+          openShortcutsHelp();
           break;
       }
     });
@@ -2418,6 +3803,42 @@
       $('#np-volume-slider').value = v;
       $('#pb-volume').value = v;
       saveState();
+    }
+
+    function toggleMuteShortcut() {
+      if (audio.volume > 0) {
+        state._pv = state.volume;
+        setVol(0);
+      } else {
+        setVol(state._pv || 75);
+      }
+    }
+
+    function stopPersonalPlayback() {
+      if (!audio.src) return;
+      audio.pause();
+      try { audio.currentTime = 0; } catch (_) { /* ignore */ }
+      state.isPlaying = false;
+      updatePlayBtns(false);
+      updateDiscordRPC();
+      toast('Đã dừng phát nhạc cá nhân', 'info');
+    }
+
+    async function openShortcutsHelp() {
+      await showConfirmModal({
+        title: 'Phím tắt MiGu Music',
+        message:
+          '• Space: Play/Pause\n' +
+          '• Ctrl + Right / Left: Next / Prev\n' +
+          '• Ctrl + Up / Down: Tăng / Giảm âm lượng\n' +
+          '• M: Tắt / Bật âm thanh\n' +
+          '• S: Dừng nhạc cá nhân\n' +
+          '• Ctrl + K: Mở tìm kiếm\n' +
+          '• Esc: Thoát Now Playing\n' +
+          '• ?: Mở hướng dẫn phím tắt',
+        confirmText: 'Đã hiểu',
+        cancelText: 'Đóng',
+      });
     }
   }
 
