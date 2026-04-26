@@ -26,6 +26,7 @@
 
   /* Accent — soft warm coral */
   --accent: #ff6363;
+  --accent-contrast: #ffffff;
   --accent-soft: rgba(255, 99, 99, 0.15);
   --accent-glow: rgba(255, 99, 99, 0.25);
 
@@ -60,6 +61,27 @@ body {
   font-size: 14px;
   -webkit-user-select: none;
   user-select: none;
+}
+
+body[data-theme='normal'] {
+  --bg-deep: #050510;
+  --bg-base: #0c0c1e;
+  --glass: rgba(255, 255, 255, 0.04);
+  --glass-hover: rgba(255, 255, 255, 0.07);
+  --glass-active: rgba(255, 255, 255, 0.10);
+  --glass-border: rgba(255, 255, 255, 0.06);
+  --glass-strong: rgba(255, 255, 255, 0.12);
+  --text-primary: #f5f5fa;
+  --text-secondary: rgba(255, 255, 255, 0.55);
+  --text-tertiary: rgba(255, 255, 255, 0.3);
+  --accent: #ff6363;
+  --accent-contrast: #ffffff;
+  --accent-soft: rgba(255, 99, 99, 0.15);
+  --accent-glow: rgba(255, 99, 99, 0.25);
+  background:
+    linear-gradient(rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.5)),
+    url('../background.jpg') no-repeat center center fixed;
+  background-size: cover;
 }
 
 /* Ngoại lệ: chỉ thanh tìm kiếm chính + ô lọc phòng lobby. Các ô nhập khác dựa vào hành vi mặc định của trình duyệt để gõ/sửa. */
@@ -241,6 +263,10 @@ img    { display: block; max-width: 100%; }
 .playlist-item:hover { background: var(--glass-hover); color: var(--text-primary); }
 .playlist-item.active { color: var(--accent); }
 .playlist-item.active svg { fill: var(--accent); color: var(--accent); }
+
+.theme-toggle-btn {
+  border: 1px solid var(--glass-border);
+}
 
 .sidebar-footer {
   padding: 14px 20px 16px;
@@ -946,7 +972,7 @@ img    { display: block; max-width: 100%; }
   background: var(--accent);
   border-radius: var(--r-full);
   font-size: 13px; font-weight: 600;
-  color: white;
+  color: var(--accent-contrast);
   display: flex; align-items: center; gap: 6px;
   transition: all 0.2s var(--ease);
   white-space: nowrap;
@@ -1094,7 +1120,7 @@ img    { display: block; max-width: 100%; }
 .np-play-btn {
   width: 52px; height: 52px;
   background: var(--accent);
-  color: white !important;
+  color: var(--accent-contrast) !important;
   box-shadow: 0 4px 20px var(--accent-glow);
   transition: all 0.2s var(--spring);
 }
@@ -1535,6 +1561,61 @@ img    { display: block; max-width: 100%; }
 .modal input:focus { border-color: rgba(91,154,255,0.3); box-shadow: 0 0 0 4px rgba(91,154,255,0.08); }
 .modal input::placeholder { color: var(--text-tertiary); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 6px; }
+
+body[data-theme='normal'] .sidebar {
+  background: rgba(255, 255, 255, 0.03);
+  border-right: 1px solid rgba(255, 255, 255, 0.25);
+  box-shadow: inset -1px 0 0 rgba(255,255,255,0.1), 5px 0 30px rgba(0,0,0,0.4);
+}
+
+body[data-theme='normal'] .np-right {
+  background: rgba(255, 255, 255, 0.03);
+  border-left: 1px solid rgba(255, 255, 255, 0.25);
+  box-shadow: inset 1px 0 0 rgba(255,255,255,0.1), -5px 0 30px rgba(0,0,0,0.4);
+}
+
+body[data-theme='normal'] .player-bar {
+  background: rgba(8, 8, 22, 0.92);
+}
+
+body[data-theme='normal'] .search-suggestions,
+body[data-theme='normal'] .toast,
+body[data-theme='normal'] .modal {
+  background: rgba(16, 16, 36, 0.92);
+  box-shadow: 0 16px 48px rgba(0,0,0,0.5);
+}
+
+body[data-theme='normal'] ::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.08);
+}
+
+body[data-theme='normal'] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.15);
+}
+
+body[data-theme='dark'] {
+  --bg-deep: #000000;
+  --bg-base: #000000;
+  --glass: rgba(255, 255, 255, 0.04);
+  --glass-hover: rgba(255, 255, 255, 0.08);
+  --glass-active: rgba(255, 255, 255, 0.12);
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --glass-strong: rgba(255, 255, 255, 0.18);
+  --text-primary: #ffffff;
+  --text-secondary: rgba(255, 255, 255, 0.72);
+  --text-tertiary: rgba(255, 255, 255, 0.45);
+  --accent: #ffffff;
+  --accent-contrast: #000000;
+  --accent-soft: rgba(255, 255, 255, 0.14);
+  --accent-glow: rgba(255, 255, 255, 0.2);
+  background: #000;
+  background-image: none;
+}
+
+body[data-theme='dark'] .bg-gradient,
+body[data-theme='dark'] .bg-particles {
+  display: none;
+}
 
 /* ── Player Bar Spacing ───────────────────────────────────────── */
 .has-player .view { padding-bottom: 80px; }

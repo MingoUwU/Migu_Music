@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════
-  MiGu Music Player v2.2.5
+  MiGu Music Player v2.2.6
    ═══════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -26,6 +26,7 @@
     activeListenSession: null,
     lowPerformanceMode: false,
     superSaverMode: false,
+    theme: 'normal',
     lastVisualizerFrameAt: 0,
     trendingCategory: 'all',
     communityChartSongs: [],
@@ -349,6 +350,7 @@
     detectPerformanceMode();
     checkServer();
     loadState();
+    setupThemeToggle();
     setupPerformanceToggle();
     setupParticles();
     setupNavigation();
@@ -521,6 +523,35 @@
     });
   }
 
+  function applyTheme(theme) {
+    const nextTheme = theme === 'dark' ? 'dark' : 'normal';
+    state.theme = nextTheme;
+    document.body.dataset.theme = nextTheme;
+  }
+
+  function setupThemeToggle() {
+    const btn = $('#btn-theme-toggle');
+    applyTheme(state.theme);
+    if (!btn) return;
+
+    const label = btn.querySelector('[data-theme-label]');
+    const icon = btn.querySelector('[data-theme-icon]');
+    const refreshThemeLabel = () => {
+      const isDark = state.theme === 'dark';
+      btn.classList.toggle('active', isDark);
+      if (label) label.textContent = isDark ? 'Dark mode' : 'Normal mode';
+      if (icon) icon.textContent = isDark ? '🌑' : '◐';
+    };
+
+    refreshThemeLabel();
+    btn.addEventListener('click', () => {
+      applyTheme(state.theme === 'dark' ? 'normal' : 'dark');
+      saveState();
+      refreshThemeLabel();
+      toast(state.theme === 'dark' ? 'Đã bật Dark mode ' : 'Đã bật Normal mode', 'info');
+    });
+  }
+
   // ── Persistence ───────────────────────────────────────────────
   function loadState() {
     try {
@@ -536,6 +567,8 @@
         state.shuffle = d.shuffle || false;
         state.listeningHistory = Array.isArray(d.listeningHistory) ? d.listeningHistory.slice(-120) : [];
         state.superSaverMode = !!d.superSaverMode;
+        // Backward compatibility: old "light" now maps to "normal".
+        state.theme = d.theme === 'dark' ? 'dark' : 'normal';
         state.dismissedSuggestionIds = Array.isArray(d.dismissedSuggestionIds) ? d.dismissedSuggestionIds : [];
         enforceStateLimits();
         if (state.currentIndex >= state.queue.length) {
@@ -585,6 +618,7 @@
         shuffle: state.shuffle,
         listeningHistory: state.listeningHistory.slice(-120),
         superSaverMode: state.superSaverMode,
+        theme: state.theme,
         dismissedSuggestionIds: state.dismissedSuggestionIds.slice(-MAX_DISMISSED_SUGGESTIONS),
       }));
     } catch (e) { /* silent */ }
