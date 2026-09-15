@@ -219,13 +219,8 @@ app.whenReady().then(async () => {
       return;
     }
     console.log('[Updater] Checking for updates... Current version:', app.getVersion());
-    // Dùng checkForUpdates (không dùng checkForUpdatesAndNotify) để tránh notification hệ thống trùng với modal trong app
     autoUpdater.checkForUpdates().catch((err) => {
       console.error('[Updater] Failed to check for updates:', err);
-      sendUpdateEvent({
-        type: 'error',
-        message: (err && err.message) || String(err),
-      });
     });
   }
 
@@ -325,11 +320,16 @@ autoUpdater.on('update-not-available', (info) => {
 
 autoUpdater.on('error', (err) => {
   console.error('[Updater] Error in auto-updater:', err);
+  const wasManual = manualUpdateCheck;
   manualUpdateCheck = false;
   let message = (err && err.message) || String(err);
   if (/404|not found|latest\.yml|HttpError/i.test(message)) {
-    message +=
-      ' — Thường do: Release chưa Publish (còn nháp), thiếu file latest.yml hoặc file .exe trên GitHub, hoặc chưa chạy npm run release (cần GH_TOKEN) để đẩy artifact lên Release.';
+    // Nếu kiểm tra tự động nền khi vừa mở app mà GitHub chưa có Release thì bỏ qua, không hiện popup làm phiền người dùng
+    if (!wasManual) {
+      console.log('[Updater] Background check: no release published on GitHub yet (404).');
+      return;
+    }
+    message = 'Hiện tại chưa có bản phát hành mới trên GitHub Release (hoặc repo chưa publish file latest.yml).';
   }
   sendUpdateEvent({ type: 'error', message });
 });

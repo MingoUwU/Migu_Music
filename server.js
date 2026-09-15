@@ -188,6 +188,8 @@ const YTDLP_EXTRACTOR_ARGS = 'youtube:player_client=tv,android';
 
 const SEARCH_CACHE = new Map();
 const SEARCH_CACHE_TTL = 15 * 60 * 1000; // 15 minutes cache
+const METADATA_CACHE = new Map();
+const METADATA_CACHE_TTL = 30 * 60 * 1000; // 30 minutes cache
 
 function getCurrentClient() {
   return INNERTUBE_CLIENTS[currentClientIndex];
@@ -285,16 +287,16 @@ async function youtubeSearch(query, retries = INNERTUBE_CLIENTS.length) {
         };
         results.push(itemObj);
 
-        // Lưu trước vào memoryCache để khi người dùng bấm phát hoặc lấy gợi ý sẽ phản hồi ngay lập tức
-        if (!memoryCache.has(v.videoId)) {
-          memoryCache.set(v.videoId, {
-            url: null,
+        // Lưu metadata vào METADATA_CACHE để tra cứu gợi ý nhanh (không làm hỏng stream memoryCache)
+        if (!METADATA_CACHE.has(v.videoId)) {
+          METADATA_CACHE.set(v.videoId, {
+            videoId: v.videoId,
             title: itemObj.title,
             author: itemObj.author,
             duration: itemObj.duration,
             thumbnail: itemObj.thumbnail,
             viewCount: itemObj.viewCount,
-            time: Date.now()
+            t: Date.now()
           });
         }
       }
@@ -644,8 +646,8 @@ function scoreCandidate(song, profile, recentIds = new Set()) {
 async function getCachedUrl(videoId) {
   try {
     const cached = memoryCache.get(videoId);
-    if (cached && Date.now() - cached.time < CACHE_TTL * 1000) return cached;
-    if (cached) memoryCache.delete(videoId);
+    if (cached && cached.url && Date.now() - cached.time < CACHE_TTL * 1000) return cached;
+    if (cached && !cached.url) memoryCache.delete(videoId);
   } catch (e) { log('Cache Get Error: ' + e.message, 'ERROR'); }
   return null;
 }
@@ -760,7 +762,7 @@ async function getVideoInfoCachedForUi(videoId, queryTitle, queryAuthor) {
   const row = VIDEO_INFO_UI_CACHE.get(videoId);
   if (row && Date.now() - row.t < 10 * 60 * 1000) return row.info;
 
-  // 1. Kiểm tra bộ nhớ cache stream (đã có title, author khi click phát nhạc)
+  // 1. Kiểm tra bộ nhớ cache stream (đã phát và có streamUrl)
   const mem = memoryCache.get(videoId);
   if (mem && mem.title) {
     const info = {
@@ -771,14 +773,32 @@ async function getVideoInfoCachedForUi(videoId, queryTitle, queryAuthor) {
       thumbnail: mem.thumbnail || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
       viewCount: mem.viewCount || 0,
       likeCount: 0,
-      streamUrl: mem.url,
+      streamUrl: mem.url || null,
       proxyStreamUrl: `/api/stream/${encodeURIComponent(videoId)}`,
     };
     VIDEO_INFO_UI_CACHE.set(videoId, { info, t: Date.now() });
     return info;
   }
 
-  // 2. Nếu client đã biết title/author, tạo info ngay tức thì — KHÔNG cần gọi yt-dlp gây trễ 5-10s
+  // 2. Kiểm tra bộ nhớ cache metadata từ tìm kiếm
+  const meta = METADATA_CACHE.get(videoId);
+  if (meta && meta.title && Date.now() - meta.t < METADATA_CACHE_TTL) {
+    const info = {
+      videoId: videoId,
+      title: meta.title,
+      author: meta.author || '',
+      duration: meta.duration || 0,
+      thumbnail: meta.thumbnail || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+      viewCount: meta.viewCount || 0,
+      likeCount: 0,
+      streamUrl: null,
+      proxyStreamUrl: `/api/stream/${encodeURIComponent(videoId)}`,
+    };
+    VIDEO_INFO_UI_CACHE.set(videoId, { info, t: Date.now() });
+    return info;
+  }
+
+  // 3. Nếu client đã biết title/author, tạo info ngay tức thì — KHÔNG cần gọi yt-dlp gây trễ 5-10s
   if (queryTitle) {
     const info = {
       videoId: videoId,
@@ -795,7 +815,7 @@ async function getVideoInfoCachedForUi(videoId, queryTitle, queryAuthor) {
     return info;
   }
 
-  // 3. Fallback chỉ gọi yt-dlp khi không có bất kỳ thông tin nào
+  // 4. Fallback chỉ gọi yt-dlp khi không có bất kỳ thông tin nào
   const info = await getVideoInfo(videoId);
   VIDEO_INFO_UI_CACHE.set(videoId, { info, t: Date.now() });
   return info;
