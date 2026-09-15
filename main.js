@@ -5,6 +5,13 @@ const fs = require('fs');
 const net = require('net');
 const { ipcMain } = require('electron');
 
+process.on('uncaughtException', (err) => {
+  console.error('[MiGu Main UncaughtException]:', err);
+  try {
+    dialog.showErrorBox('Lỗi ứng dụng', `Đã xảy ra lỗi không mong muốn:\n${err.message}\n${err.stack}`);
+  } catch (_) { }
+});
+
 // ── Memory Optimization cho máy 8GB RAM ────────────────────────
 app.commandLine.appendSwitch('renderer-process-limit', '1'); // Giới hạn chỉ mở 1 process cho giao diện
 app.commandLine.appendSwitch('js-flags', '--max-old-space-size=512'); // Cân bằng RAM/CPU, tránh GC quá dày gây tốn CPU
@@ -58,10 +65,16 @@ function isPortInUse(port) {
 async function startServer() {
   const inUse = await isPortInUse(PORT);
   if (!inUse) {
-    require('./server');
-    console.log('[MiGu] Started internal server on port', PORT);
-    // Give it a tiny moment to actually bind
-    await new Promise(r => setTimeout(r, 500));
+    try {
+      require('./server');
+      console.log('[MiGu] Started internal server on port', PORT);
+      // Give it a tiny moment to actually bind
+      await new Promise(r => setTimeout(r, 500));
+    } catch (err) {
+      console.error('[MiGu] Failed to start internal server:', err);
+      dialog.showErrorBox('Lỗi khởi động Server', `Không thể khởi động server nội bộ:\n${err.message}\n${err.stack}`);
+      throw err;
+    }
   } else {
     console.log('[MiGu] Port already in use — connecting to existing server');
   }

@@ -42,9 +42,9 @@
       "preload.js",
       "server.js",
       "public/**/*",
+      "Logo.ico",
       "package.json",
-      "node_modules/youtube-dl-exec/**/*",
-      "node_modules/@aspect/**/*"
+      "node_modules/**/*"
     ],
     "extraResources": [
       {
