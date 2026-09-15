@@ -1697,13 +1697,19 @@
     });
   }
 
+  let searchAbortController = null;
   async function performSearch(q) {
     if (!q) return;
+    if (searchAbortController) {
+      try { searchAbortController.abort(); } catch (_) { }
+    }
+    searchAbortController = new AbortController();
+
     const results = $('#search-results');
     results.innerHTML = '<div class="loading-spinner"><div class="spinner"></div></div>';
 
     try {
-      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, { signal: searchAbortController.signal });
       const data = await res.json();
       if (!data.results || data.results.length === 0) {
         results.innerHTML = '<div class="empty-state"><p>Không tìm thấy kết quả</p></div>';
@@ -1712,6 +1718,7 @@
       results.innerHTML = data.results.map(item => renderResultItem(item)).join('');
       bindResultActions(results);
     } catch (err) {
+      if (err.name === 'AbortError') return;
       results.innerHTML = `<div class="empty-state">
         <p>Lỗi tìm kiếm. Thử lại sau.</p>
         <button class="btn-primary" id="btn-rotate-client" style="margin-top:12px;font-size:12px;">
@@ -2900,7 +2907,10 @@
     }
 
     try {
-      const res = await fetch(`/api/info/${encodeURIComponent(curId)}?suggest=mixed`);
+      const curSong = state.currentSongInfo;
+      const titleParam = curSong && curSong.videoId === curId && curSong.title ? `&title=${encodeURIComponent(curSong.title)}` : '';
+      const authorParam = curSong && curSong.videoId === curId && curSong.author ? `&author=${encodeURIComponent(curSong.author)}` : '';
+      const res = await fetch(`/api/info/${encodeURIComponent(curId)}?suggest=mixed${titleParam}${authorParam}`);
       const data = await res.json();
       const recs = Array.isArray(data?.recommendedVideos) ? data.recommendedVideos : [];
       for (const v of recs) {
@@ -3078,7 +3088,10 @@
 
     try {
       const tab = encodeURIComponent(state.activeSuggestTab || 'mixed');
-      const res = await fetch(`/api/info/${encodeURIComponent(videoId)}?suggest=${tab}`);
+      const curSong = state.currentSongInfo;
+      const titleParam = curSong && curSong.videoId === videoId && curSong.title ? `&title=${encodeURIComponent(curSong.title)}` : '';
+      const authorParam = curSong && curSong.videoId === videoId && curSong.author ? `&author=${encodeURIComponent(curSong.author)}` : '';
+      const res = await fetch(`/api/info/${encodeURIComponent(videoId)}?suggest=${tab}${titleParam}${authorParam}`);
       const data = await res.json();
       const blocked = new Set((state.dismissedSuggestionIds || []).map((x) => String(x)));
       const recs = (Array.isArray(data.recommendedVideos) ? data.recommendedVideos : [])

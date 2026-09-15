@@ -169,27 +169,25 @@ const INNERTUBE_CLIENTS = [
   {
     clientName: 'WEB',
     clientVersion: '2.20240101.00.00',
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
   },
   {
-    clientName: 'TVHTML5',
-    clientVersion: '7.20240101.00.00',
-    userAgent: 'Mozilla/5.0 (SMART-TV; Linux; Tizen 6.0) AppleWebKit/538.1'
+    clientName: 'WEB',
+    clientVersion: '2.20240401.00.00',
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
   },
   {
-    clientName: 'ANDROID',
-    clientVersion: '19.09.37',
-    userAgent: 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip'
-  },
-  {
-    clientName: 'MWEB',
-    clientVersion: '2.20240101.00.00',
-    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15'
+    clientName: 'WEB',
+    clientVersion: '2.20231201.00.00',
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
   },
 ];
 
 let currentClientIndex = 0;
 const YTDLP_EXTRACTOR_ARGS = 'youtube:player_client=tv,android';
+
+const SEARCH_CACHE = new Map();
+const SEARCH_CACHE_TTL = 15 * 60 * 1000; // 15 minutes cache
 
 function getCurrentClient() {
   return INNERTUBE_CLIENTS[currentClientIndex];
@@ -204,6 +202,15 @@ function rotateClient() {
 
 // ── YouTube Innertube Search (no API key needed) ─────────────────
 async function youtubeSearch(query, retries = INNERTUBE_CLIENTS.length) {
+  const cleanQ = String(query || '').trim();
+  if (!cleanQ) return [];
+
+  const cacheKey = cleanQ.toLowerCase();
+  const cached = SEARCH_CACHE.get(cacheKey);
+  if (cached && Date.now() - cached.t < SEARCH_CACHE_TTL) {
+    return cached.results;
+  }
+
   const client = getCurrentClient();
   const url = 'https://www.youtube.com/youtubei/v1/search';
   const body = {
@@ -215,22 +222,31 @@ async function youtubeSearch(query, retries = INNERTUBE_CLIENTS.length) {
         gl: 'VN'
       }
     },
-    query: query,
+    query: cleanQ,
   };
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 4500);
 
   let res;
   try {
     res = await fetch(url, {
       method: 'POST',
+      signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
-        'User-Agent': client.userAgent
+        'User-Agent': client.userAgent,
+        'X-YouTube-Client-Name': '1',
+        'X-YouTube-Client-Version': client.clientVersion
       },
       body: JSON.stringify(body)
     });
   } catch (e) {
+    clearTimeout(timeout);
     if (retries > 1) { rotateClient(); return youtubeSearch(query, retries - 1); }
     throw e;
+  } finally {
+    clearTimeout(timeout);
   }
 
   if (!res.ok) {
@@ -249,7 +265,7 @@ async function youtubeSearch(query, retries = INNERTUBE_CLIENTS.length) {
       const items = section.itemSectionRenderer?.contents || [];
       for (const item of items) {
         const v = item.videoRenderer;
-        if (!v) continue;
+        if (!v || !v.videoId) continue;
 
         const durationText = v.lengthText?.simpleText || '0:00';
         const durationParts = durationText.split(':').map(Number);
@@ -257,7 +273,7 @@ async function youtubeSearch(query, retries = INNERTUBE_CLIENTS.length) {
         if (durationParts.length === 3) durationSec = durationParts[0] * 3600 + durationParts[1] * 60 + durationParts[2];
         else if (durationParts.length === 2) durationSec = durationParts[0] * 60 + durationParts[1];
 
-        results.push({
+        const itemObj = {
           videoId: v.videoId,
           title: v.title?.runs?.map(r => r.text).join('') || '',
           author: v.ownerText?.runs?.map(r => r.text).join('') || '',
@@ -266,11 +282,29 @@ async function youtubeSearch(query, retries = INNERTUBE_CLIENTS.length) {
           thumbnail: v.thumbnail?.thumbnails?.pop()?.url || '',
           viewCount: parseInt((v.viewCountText?.simpleText || '0').replace(/[^0-9]/g, '')) || 0,
           published: v.publishedTimeText?.simpleText || ''
-        });
+        };
+        results.push(itemObj);
+
+        // Lưu trước vào memoryCache để khi người dùng bấm phát hoặc lấy gợi ý sẽ phản hồi ngay lập tức
+        if (!memoryCache.has(v.videoId)) {
+          memoryCache.set(v.videoId, {
+            url: null,
+            title: itemObj.title,
+            author: itemObj.author,
+            duration: itemObj.duration,
+            thumbnail: itemObj.thumbnail,
+            viewCount: itemObj.viewCount,
+            time: Date.now()
+          });
+        }
       }
     }
   } catch (e) {
     log('[MiGu] Parse error: ' + e.message, 'ERROR');
+  }
+
+  if (results.length > 0) {
+    SEARCH_CACHE.set(cacheKey, { results, t: Date.now() });
   }
 
   return results;
@@ -442,11 +476,20 @@ async function youtubeSearchSafe(query) {
   }
 }
 
+const RECOMMENDATIONS_CACHE = new Map();
+const REC_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+
 /**
  * @param {'mixed'|'type'|'related'} tab
  */
 async function fetchRecommendationsForVideo(videoId, info, tab) {
   const id = String(videoId);
+  const cacheKey = `${id}_${tab}`;
+  const cachedRow = RECOMMENDATIONS_CACHE.get(cacheKey);
+  if (cachedRow && Date.now() - cachedRow.t < REC_CACHE_TTL) {
+    return cachedRow.data;
+  }
+
   const title = info.title || '';
   const author = info.author || '';
   const detected = detectSuggestionType(title, author);
@@ -459,23 +502,22 @@ async function fetchRecommendationsForVideo(videoId, info, tab) {
   if (tab === 'related') {
     raw = await youtubeSearchSafe(title);
   } else if (tab === 'type') {
-    for (const q of pools.slice(0, 2)) {
-      const r = await youtubeSearchSafe(q);
-      raw.push(...r);
-    }
+    const queries = pools.slice(0, 2);
+    const results = await Promise.all(queries.map(q => youtubeSearchSafe(q)));
+    for (const r of results) raw.push(...r);
   } else {
-    // mixed: giữ đa dạng theo thể loại, nhưng vẫn bám ngữ cảnh bài hiện tại.
+    // mixed: giữ đa dạng theo thể loại, nhưng vẫn bám ngữ cảnh bài hiện tại. Chạy song song (Parallel) để tải siêu tốc.
     const contextQueries = buildSongContextQueries(title, author);
-    const mixedQueries = [...pools.slice(0, 1), ...contextQueries.slice(0, 3)];
     const countryPool = COUNTRY_DISCOVERY_POOL[country.key] || COUNTRY_DISCOVERY_POOL.vn;
-    mixedQueries.push(countryPool[Math.floor(Math.random() * countryPool.length)]);
-    for (const q of mixedQueries) {
-      const r = await youtubeSearchSafe(q);
-      raw.push(...r);
-    }
-    const extraPool = COUNTRY_DISCOVERY_POOL[country.key] || COUNTRY_DISCOVERY_POOL.vn;
-    const qExtra = extraPool[Math.floor(Math.random() * extraPool.length)];
-    raw.push(...(await youtubeSearchSafe(qExtra)));
+    const randomCountryQuery = countryPool[Math.floor(Math.random() * countryPool.length)];
+    const mixedQueries = [
+      ...pools.slice(0, 1),
+      ...contextQueries.slice(0, 2),
+      randomCountryQuery
+    ].filter(Boolean);
+
+    const results = await Promise.all(mixedQueries.map(q => youtubeSearchSafe(q)));
+    for (const r of results) raw.push(...r);
   }
 
   const seen = new Set();
@@ -505,10 +547,14 @@ async function fetchRecommendationsForVideo(videoId, info, tab) {
     if (videos.length < 8) videos = sorted.slice(0, 14);
     else videos = videos.slice(0, 14);
   }
-  return {
+
+  const data = {
     videos,
     suggestMeta: { tab, typeKey: detected.key, typeLabel: detected.label, countryKey: country.key, countryLabel: country.label },
   };
+
+  RECOMMENDATIONS_CACHE.set(cacheKey, { data, t: Date.now() });
+  return data;
 }
 
 // ── YouTube Search Suggestions ───────────────────────────────────
@@ -710,9 +756,46 @@ async function getVideoInfo(videoId) {
 
 /** Cache metadata khi user đổi tab gợi ý — tránh gọi yt-dlp lặp lại */
 const VIDEO_INFO_UI_CACHE = new Map();
-async function getVideoInfoCachedForUi(videoId) {
+async function getVideoInfoCachedForUi(videoId, queryTitle, queryAuthor) {
   const row = VIDEO_INFO_UI_CACHE.get(videoId);
-  if (row && Date.now() - row.t < 6 * 60 * 1000) return row.info;
+  if (row && Date.now() - row.t < 10 * 60 * 1000) return row.info;
+
+  // 1. Kiểm tra bộ nhớ cache stream (đã có title, author khi click phát nhạc)
+  const mem = memoryCache.get(videoId);
+  if (mem && mem.title) {
+    const info = {
+      videoId: videoId,
+      title: mem.title || '',
+      author: mem.author || '',
+      duration: mem.duration || 0,
+      thumbnail: mem.thumbnail || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+      viewCount: mem.viewCount || 0,
+      likeCount: 0,
+      streamUrl: mem.url,
+      proxyStreamUrl: `/api/stream/${encodeURIComponent(videoId)}`,
+    };
+    VIDEO_INFO_UI_CACHE.set(videoId, { info, t: Date.now() });
+    return info;
+  }
+
+  // 2. Nếu client đã biết title/author, tạo info ngay tức thì — KHÔNG cần gọi yt-dlp gây trễ 5-10s
+  if (queryTitle) {
+    const info = {
+      videoId: videoId,
+      title: queryTitle,
+      author: queryAuthor || '',
+      duration: 0,
+      thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+      viewCount: 0,
+      likeCount: 0,
+      streamUrl: null,
+      proxyStreamUrl: `/api/stream/${encodeURIComponent(videoId)}`,
+    };
+    VIDEO_INFO_UI_CACHE.set(videoId, { info, t: Date.now() });
+    return info;
+  }
+
+  // 3. Fallback chỉ gọi yt-dlp khi không có bất kỳ thông tin nào
   const info = await getVideoInfo(videoId);
   VIDEO_INFO_UI_CACHE.set(videoId, { info, t: Date.now() });
   return info;
@@ -737,7 +820,10 @@ app.get('/api/info/:id', async (req, res) => {
     const { id } = req.params;
     const rawTab = String(req.query.suggest || 'mixed').toLowerCase();
     const suggestTab = ['mixed', 'type', 'related'].includes(rawTab) ? rawTab : 'mixed';
-    const info = await getVideoInfoCachedForUi(id);
+    const queryTitle = req.query.title ? String(req.query.title).trim() : null;
+    const queryAuthor = req.query.author ? String(req.query.author).trim() : null;
+
+    const info = await getVideoInfoCachedForUi(id, queryTitle, queryAuthor);
 
     let recommended = [];
     let suggestMeta = { tab: suggestTab, typeKey: 'vpop', typeLabel: 'V-Pop', countryKey: 'vn', countryLabel: 'Việt Nam' };
