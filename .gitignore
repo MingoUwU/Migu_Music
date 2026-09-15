@@ -3,3 +3,7 @@ dist/
 .env
 .DS_Store
 *.log
+
+# SQL / Supabase migrations — chạy tay trên Supabase, không đưa lên remote
+supabase/
+**/*.sql
